@@ -606,6 +606,10 @@
         style="display:none; position:absolute; top:10px; right:10px; width:36px; height:36px; border-radius:50%;
                background:rgba(21,24,29,.85); border:1px solid var(--border); color:var(--text);
                font-size:16px; align-items:center; justify-content:center; cursor:pointer;">💡</button>
+      <button id="switchCamBtn" onclick="switchCamera()" title="Changer de caméra"
+        style="display:none; position:absolute; top:10px; left:10px; width:36px; height:36px; border-radius:50%;
+               background:rgba(21,24,29,.85); border:1px solid var(--border); color:var(--text);
+               font-size:16px; align-items:center; justify-content:center; cursor:pointer;">🔄</button>
     </div>
     <div class="off-status" id="scannerStatus" style="margin-top:10px;"></div>
   </div>
@@ -1572,39 +1576,96 @@ const barcodeFormats = ()=>[
 const FRONT_CAM_RE = /front|selfie|user|face|avant/i;
 const BACK_CAM_RE  = /back|rear|environment|arri[eè]re|world|dual|wide/i;
 
-// Démarre la caméra arrière avec 3 niveaux de repli, en excluant systématiquement
+// Liste des caméras détectées pendant la session de scan en cours, + index de
+// celle actuellement active dans cette liste. Alimentée dès qu'on a la permission
+// caméra (avant si possible), pour permettre le bouton "changer de caméra".
+let scanCameras = [];
+let scanCameraIndex = -1;
+let scanSwitchBusy = false;
+let currentScanConfig = null;
+
+// Choisit, parmi une liste de caméras, l'index le plus probable pour la caméra
+// arrière : on exclut d'abord tout ce qui ressemble à une frontale/selfie, puis
+// on préfère un label explicitement "arrière", sinon la première caméra restante.
+function pickBackCameraIndex(cameras){
+  const nonFrontIdx = cameras
+    .map((c,i)=>({label:c.label||'', i}))
+    .filter(({label})=>!FRONT_CAM_RE.test(label));
+  const back = nonFrontIdx.find(({label})=>BACK_CAM_RE.test(label));
+  if(back) return back.i;
+  if(nonFrontIdx.length) return nonFrontIdx[0].i;
+  return 0; // dernier recours : au moins la première de la liste
+}
+
+function updateSwitchCamBtnVisibility(){
+  $('switchCamBtn').style.display = scanCameras.length > 1 ? 'flex' : 'none';
+}
+
+// Démarre la caméra arrière avec repli en cascade, en excluant systématiquement
 // toute caméra dont le label sent la caméra frontale (le vieux code retombait sur
 // cameras[cameras.length-1], qui n'est pas fiablement la caméra arrière sur tous
 // les téléphones, notamment certains iPhone).
 async function startBackCamera(scanConfig){
+  currentScanConfig = scanConfig;
   const onScan = (decodedText)=>onBarcodeScanned(decodedText);
   const onFail = ()=>{}; // échecs de lecture image par image : on ignore, c'est normal
 
-  // 1er essai : caméra arrière via facingMode strict (fonctionne sur la grande
-  // majorité des téléphones, et par construction ne peut pas être la frontale).
+  // 1er essai : lister directement les caméras avec leurs labels. Si ça marche,
+  // on connaît tout de suite les device id exacts, ce qui permet de démarrer sur
+  // l'arrière ET d'activer le bouton "changer de caméra" sans reconfiguration.
+  try{ scanCameras = await Html5Qrcode.getCameras(); }catch(e){ scanCameras = []; }
+
+  if(scanCameras.length){
+    scanCameraIndex = pickBackCameraIndex(scanCameras);
+    await html5QrcodeScanner.start(scanCameras[scanCameraIndex].id, scanConfig, onScan, onFail);
+    updateSwitchCamBtnVisibility();
+    return;
+  }
+
+  // Repli : getCameras() peut échouer si la permission caméra n'a pas encore
+  // été accordée sur certains navigateurs. On démarre via facingMode, qui
+  // déclenche lui-même la demande de permission.
   try{
     await html5QrcodeScanner.start({ facingMode: { exact: 'environment' } }, scanConfig, onScan, onFail);
-    return;
   }catch(firstErr){
-    // 2e essai : facingMode non strict, avant de passer à la sélection manuelle
-    // par label (utile si "exact" est refusé mais qu'une caméra environment existe).
+    await html5QrcodeScanner.start({ facingMode: 'environment' }, scanConfig, onScan, onFail);
+  }
+
+  // La permission est maintenant accordée : on retente de lister les caméras
+  // pour activer le bouton switch pour la suite (le flux en cours n'est pas
+  // interrompu, cet appel ne fait qu'énumérer les périphériques).
+  try{ scanCameras = await Html5Qrcode.getCameras(); }catch(e){ scanCameras = []; }
+  scanCameraIndex = scanCameras.length ? pickBackCameraIndex(scanCameras) : -1;
+  updateSwitchCamBtnVisibility();
+}
+
+// Bascule vers la caméra suivante dans la liste détectée (boucle). Coupe puis
+// relance le flux avec le même scanConfig que le démarrage initial.
+async function switchCamera(){
+  if(scanSwitchBusy || !html5QrcodeScanner || scanCameras.length < 2) return;
+  scanSwitchBusy = true;
+  const status = $('scannerStatus');
+  const btn = $('switchCamBtn');
+  btn.disabled = true;
+  try{
+    await stopBarcodeScanner();
+    scanCameraIndex = (scanCameraIndex + 1) % scanCameras.length;
+    const cam = scanCameras[scanCameraIndex];
+    await html5QrcodeScanner.start(cam.id, currentScanConfig, (decodedText)=>onBarcodeScanned(decodedText), ()=>{});
+    scanLocked = false;
+    status.textContent = 'Vise le code-barres avec la caméra...';
+    status.className = 'off-status';
     try{
-      await html5QrcodeScanner.start({ facingMode: 'environment' }, scanConfig, onScan, onFail);
-      return;
-    }catch(secondErr){
-      // 3e essai (repli final) : on liste les caméras et on choisit par label,
-      // en excluant explicitement toute caméra identifiée comme frontale.
-      const cameras = await Html5Qrcode.getCameras();
-      if(!cameras || !cameras.length) throw secondErr;
-
-      const nonFront = cameras.filter(c=>!FRONT_CAM_RE.test(c.label || ''));
-      const cam =
-        nonFront.find(c=>BACK_CAM_RE.test(c.label || ''))  // label explicitement "arrière"
-        || nonFront[0]                                      // sinon toute caméra non identifiée comme frontale
-        || cameras[0];                                       // dernier recours : au moins la première de la liste
-
-      await html5QrcodeScanner.start(cam.id, scanConfig, onScan, onFail);
-    }
+      const caps = html5QrcodeScanner.getRunningTrackCapabilities && html5QrcodeScanner.getRunningTrackCapabilities();
+      setupTorch(caps);
+    }catch(e){}
+  }catch(e){
+    console.error('switchCamera error', e);
+    status.textContent = "Impossible de changer de caméra.";
+    status.className = 'off-status err';
+  }finally{
+    scanSwitchBusy = false;
+    btn.disabled = false;
   }
 }
 
@@ -1616,6 +1677,9 @@ async function openBarcodeScanner(context){
   status.className = 'off-status loading';
   $('qrReader').classList.remove('scan-flash');
   $('torchBtn').style.display = 'none';
+  $('switchCamBtn').style.display = 'none';
+  scanCameras = [];
+  scanCameraIndex = -1;
   openModal('modalScanner');
   try{
     await loadHtml5QrcodeLib();
