@@ -595,19 +595,19 @@
     <button class="modal-close" onclick="closeScanner()">×</button>
     <h2>Scanner un code-barres</h2>
     <div style="position:relative; border-radius:12px; overflow:hidden;">
-      <div id="qrReader" style="width:100%; background:#000;"></div>
+      <div id="qrReader" style="width:100%; background:#000; position:relative; z-index:1;"></div>
       <!-- Cadre de visée purement visuel : aide à cadrer/tenir le téléphone stable
            pile sur la zone scannée par le détecteur, ce qui réduit largement le temps
            réel avant détection (bien plus que l'algorithme lui-même). -->
-      <div id="scanGuide" style="position:absolute; inset:0; pointer-events:none; display:flex; align-items:center; justify-content:center;">
+      <div id="scanGuide" style="position:absolute; inset:0; z-index:2; pointer-events:none; display:flex; align-items:center; justify-content:center;">
         <div style="width:78%; max-width:280px; height:34%; max-height:100px; border:2px solid var(--prot); border-radius:10px; box-shadow:0 0 0 2000px rgba(0,0,0,.35);"></div>
       </div>
       <button id="torchBtn" onclick="toggleTorch()" title="Activer/désactiver la lampe torche"
-        style="display:none; position:absolute; top:10px; right:10px; width:36px; height:36px; border-radius:50%;
+        style="display:none; position:absolute; top:10px; right:10px; z-index:3; width:36px; height:36px; border-radius:50%;
                background:rgba(21,24,29,.85); border:1px solid var(--border); color:var(--text);
                font-size:16px; align-items:center; justify-content:center; cursor:pointer;">💡</button>
       <button id="switchCamBtn" onclick="switchCamera()" title="Changer de caméra"
-        style="display:none; position:absolute; top:10px; left:10px; width:36px; height:36px; border-radius:50%;
+        style="display:none; position:absolute; top:10px; left:10px; z-index:3; width:36px; height:36px; border-radius:50%;
                background:rgba(21,24,29,.85); border:1px solid var(--border); color:var(--text);
                font-size:16px; align-items:center; justify-content:center; cursor:pointer;">🔄</button>
     </div>
@@ -1617,6 +1617,11 @@ async function startBackCamera(scanConfig){
 
   if(scanCameras.length){
     scanCameraIndex = pickBackCameraIndex(scanCameras);
+    // getCameras() ouvre puis referme brièvement la caméra pour lire les labels.
+    // Sur iOS Safari, redemander l'accès trop vite juste après peut échouer
+    // ("Could not start video source") : une petite pause laisse le temps au
+    // système de bien libérer le flux avant qu'on le rouvre. Inoffensif sur Android.
+    if(isIOS()) await wait(200);
     await html5QrcodeScanner.start(scanCameras[scanCameraIndex].id, scanConfig, onScan, onFail);
     updateSwitchCamBtnVisibility();
     return;
@@ -1639,6 +1644,17 @@ async function startBackCamera(scanConfig){
   updateSwitchCamBtnVisibility();
 }
 
+// Empêche un await de rester bloqué indéfiniment (bug connu de html5-qrcode :
+// stop()/start() peuvent ne jamais se résoudre sur certains téléphones/versions
+// iOS Safari). Sans ça, un blocage silencieux donne l'impression que le bouton
+// "ne fait rien" alors qu'une promesse est juste restée pendante pour toujours.
+function withTimeout(promise, ms, label){
+  return Promise.race([
+    promise,
+    new Promise((_, reject)=>setTimeout(()=>reject(new Error(label+' timeout')), ms))
+  ]);
+}
+
 // Bascule vers la caméra suivante dans la liste détectée (boucle). Coupe puis
 // relance le flux avec le même scanConfig que le démarrage initial.
 async function switchCamera(){
@@ -1647,11 +1663,20 @@ async function switchCamera(){
   const status = $('scannerStatus');
   const btn = $('switchCamBtn');
   btn.disabled = true;
+  status.textContent = 'Changement de caméra...';
+  status.className = 'off-status loading';
   try{
-    await stopBarcodeScanner();
+    await withTimeout(stopBarcodeScanner(), 4000, 'stop');
+    // Même raison que dans startBackCamera : iOS Safari a besoin d'un court délai
+    // après avoir coupé le flux avant d'en rouvrir un nouveau, sous peine d'échec.
+    if(isIOS()) await wait(200);
     scanCameraIndex = (scanCameraIndex + 1) % scanCameras.length;
     const cam = scanCameras[scanCameraIndex];
-    await html5QrcodeScanner.start(cam.id, currentScanConfig, (decodedText)=>onBarcodeScanned(decodedText), ()=>{});
+    await withTimeout(
+      html5QrcodeScanner.start(cam.id, currentScanConfig, (decodedText)=>onBarcodeScanned(decodedText), ()=>{}),
+      6000,
+      'start'
+    );
     scanLocked = false;
     status.textContent = 'Vise le code-barres avec la caméra...';
     status.className = 'off-status';
@@ -1661,13 +1686,23 @@ async function switchCamera(){
     }catch(e){}
   }catch(e){
     console.error('switchCamera error', e);
-    status.textContent = "Impossible de changer de caméra.";
+    status.textContent = "Impossible de changer de caméra, réessaie ou ferme/rouvre le scanner.";
     status.className = 'off-status err';
   }finally{
     scanSwitchBusy = false;
     btn.disabled = false;
   }
 }
+
+// Détection iOS (iPhone/iPad, y compris iPadOS qui se déclare comme "Mac" avec
+// écran tactile) : sert uniquement à ajuster de petits réglages caméra, jamais
+// à changer le comportement fonctionnel de l'app.
+function isIOS(){
+  return /iP(hone|od|ad)/.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+function wait(ms){ return new Promise(resolve=>setTimeout(resolve, ms)); }
 
 async function openBarcodeScanner(context){
   scanContext = context || 'product';
@@ -1688,13 +1723,34 @@ async function openBarcodeScanner(context){
       html5QrcodeScanner = new Html5Qrcode('qrReader', { formatsToSupport: barcodeFormats() });
     }
     const scanConfig = {
-      fps: 20,
-      qrbox: { width: 280, height: 110 },
+      // Safari iOS peine à tenir un décodage à 20fps sans ralentir le reste de l'UI
+      // (le rendu vidéo + le décodage tournent sur le même thread principal, plus
+      // contraint que sur Chrome Android) : on baisse un peu le fps sur iOS.
+      fps: isIOS() ? 15 : 20,
+      // Zone de visée calculée en % de la taille réelle du flux vidéo plutôt qu'en
+      // pixels fixes : une taille fixe peut dépasser le cadre sur un petit écran
+      // (iPhone SE) ou un flux vidéo à un ratio inhabituel (certains Android), ce
+      // qui fait planter la lib au démarrage. C'est la forme recommandée par
+      // html5-qrcode elle-même pour rester compatible avec tous les appareils.
+      qrbox: function(viewfinderWidth, viewfinderHeight){
+        const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+        const w = Math.floor(minEdge * 0.7);
+        return { width: w, height: Math.floor(w * 0.4) };
+      },
       disableFlip: true,
       formatsToSupport: barcodeFormats(),
-      // mise au point continue plutôt que ponctuelle, quand le téléphone le permet :
-      // c'est souvent l'autofocus (pas le décodage) qui domine le délai de détection.
-      videoConstraints: { focusMode: 'continuous' }
+      videoConstraints: {
+        // "ideal" et non une valeur brute : une contrainte brute peut être traitée
+        // comme obligatoire par certains navigateurs et faire échouer tout le
+        // démarrage caméra si le mode n'est pas supporté (pas mal d'Android
+        // d'entrée de gamme, et certains iPhone). En "ideal", elle est simplement
+        // ignorée si indisponible, sans jamais bloquer l'ouverture de la caméra.
+        focusMode: { ideal: 'continuous' },
+        // Stabilise la résolution choisie : sans ça, Safari iOS a tendance à
+        // sélectionner un flux 4:3 haute résolution plus lourd à décoder frame
+        // par frame, ce qui ralentit la détection.
+        aspectRatio: { ideal: 1.7777777778 }
+      }
     };
     await startBackCamera(scanConfig);
     status.textContent = 'Vise le code-barres avec la caméra...';
