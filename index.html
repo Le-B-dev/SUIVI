@@ -196,6 +196,9 @@
 
   .day-item{background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:12px 14px; margin-bottom:6px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;}
   .day-item .date{font-size:14px; font-weight:600; text-transform:capitalize;}
+  .day-item .day-name{display:inline-block; border-bottom:1px dashed transparent;}
+  .day-item .day-name:active{border-bottom-color:var(--text-faint);}
+  .day-item .day-date-sub{font-family:'Space Grotesk',sans-serif; text-transform:none; letter-spacing:normal;}
   .day-item .sub{font-size:12px; color:var(--text-dim); margin-top:3px; font-family:'JetBrains Mono',monospace;}
   .day-item .chev{color:var(--text-faint); font-size:18px;}
   .mini-btn{background:none; border:1px solid var(--border); color:var(--prot); border-radius:20px; padding:5px 12px; font-size:11px; font-family:'Space Grotesk',sans-serif; font-weight:600; text-transform:none; letter-spacing:normal; cursor:pointer;}
@@ -220,7 +223,6 @@
   .off-status.err{color:var(--danger);}
   .off-status.loading{color:var(--text-dim);}
   #qrReader{transition:box-shadow .15s ease;}
-  #qrReader.scan-flash{box-shadow:0 0 0 3px var(--prot) inset;}
 
   /* weight */
   .weight-chart{background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:14px; margin-bottom:12px;}
@@ -409,6 +411,17 @@
         <div class="field"><label>Glucides (g)</label><input type="number" id="goalGluc" readonly></div>
       </div>
     </div>
+
+    <div class="goal-card goal-card-compact">
+      <h3>Sauvegarde</h3>
+      <div style="font-size:12px; color:var(--text-dim); line-height:1.5; margin-bottom:10px;">
+        Toutes tes données (aliments, journal, pesées, profil) sont stockées uniquement sur cet appareil, dans ce fichier. Exporte-les régulièrement pour ne rien perdre si tu changes de téléphone ou de version de l'app.
+      </div>
+      <button class="btn btn-secondary" onclick="exportData()">Exporter mes données (.json)</button>
+      <button class="btn btn-ghost" style="margin-top:8px;" onclick="$('importDataInput').click()">Importer une sauvegarde</button>
+      <input type="file" id="importDataInput" accept="application/json" style="display:none;">
+      <div class="off-status" id="backupStatus" style="margin-top:8px;"></div>
+    </div>
   </section>
 
   </main>
@@ -446,7 +459,7 @@
       <div class="barcode-row">
         <input type="text" id="logBarcodeInput" inputmode="numeric" placeholder="ex: 3017620422003">
         <button onclick="lookupBarcodeInLog()">Chercher</button>
-        <button onclick="openBarcodeScanner('log')" title="Scanner avec l'appareil photo">📷</button>
+        <button onclick="openBarcodeScanner('log')" title="Prendre une photo du code-barres">📷</button>
       </div>
       <div class="off-status" id="logBarcodeStatus"></div>
     </div>
@@ -495,7 +508,7 @@
       <div class="barcode-row">
         <input type="text" id="barcodeInput" inputmode="numeric" placeholder="ex: 3017620422003">
         <button onclick="lookupBarcode()">Chercher</button>
-        <button onclick="openBarcodeScanner()" title="Scanner avec l'appareil photo">📷</button>
+        <button onclick="openBarcodeScanner()" title="Prendre une photo du code-barres">📷</button>
       </div>
       <div class="off-status" id="offStatus"></div>
     </div>
@@ -531,7 +544,17 @@
 <div class="modal-backdrop" id="modalDayDetail">
   <div class="modal">
     <button class="modal-close" onclick="closeModal('modalDayDetail')">×</button>
-    <h2 id="dayDetailTitle">Jour</h2>
+    <div id="dayDetailTitleRow" style="display:flex; align-items:center; gap:7px; cursor:pointer;" title="Taper pour renommer ce repas">
+      <h2 id="dayDetailTitle" style="border-bottom:1px dashed var(--text-faint); padding-bottom:2px;">Jour</h2>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-faint)" stroke-width="2" style="flex-shrink:0;">
+        <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+      </svg>
+    </div>
+    <input type="text" id="dayDetailTitleInput" placeholder="Nom du repas"
+      style="display:none; width:100%; background:none; border:none; border-bottom:1px solid var(--border);
+             color:var(--text); font-family:'Space Grotesk',sans-serif; font-size:17px; font-weight:600;
+             padding:0 0 4px; margin:0;">
+    <div id="dayDetailDateSub" style="font-size:13px; color:var(--text-dim); margin:-10px 0 16px; display:none;"></div>
     <div class="weight-stats" style="margin-bottom:16px;">
       <div class="wstat"><div class="l">Cal</div><div class="v mono" id="dayCal">—</div></div>
       <div class="wstat"><div class="l">Prot</div><div class="v mono" id="dayProt">—</div></div>
@@ -555,13 +578,19 @@
   </div>
 </div>
 
-<!-- MODAL: barcode scanner (camera) -->
+<!-- input caché : déclenche l'appareil photo natif du téléphone (capture=environment),
+     réutilisé aussi bien depuis "Nouvel aliment" que depuis "Ajouter au journal". -->
+<input type="file" id="barcodePhotoInput" accept="image/*" capture="environment" style="display:none;">
+
+<!-- MODAL: analyse d'une photo de code-barres/QR -->
 <div class="modal-backdrop" id="modalScanner">
   <div class="modal">
     <button class="modal-close" onclick="closeScanner()">×</button>
-    <h2>Scanner un code-barres</h2>
-    <div id="qrReader" style="width:100%; border-radius:12px; overflow:hidden; background:#000;"></div>
-    <div class="off-status" id="scannerStatus" style="margin-top:10px;"></div>
+    <h2>Analyse de la photo</h2>
+    <img id="scannedPhotoPreview" style="width:100%; border-radius:12px; margin-bottom:10px; display:none;">
+    <div id="qrReader" style="display:none;"></div>
+    <div class="off-status" id="scannerStatus"></div>
+    <button class="btn btn-ghost" style="margin-top:14px;" onclick="closeScanner()">Annuler</button>
   </div>
 </div>
 
@@ -614,6 +643,7 @@ function $(id){
 let products = [];
 let logs = {};
 let weights = [];
+let dayNames = {}; // { [dateKey]: "nom personnalisé du repas" } — n'affecte jamais la date elle-même
 
 // Index id->aliment (évite un .find() en O(n) à chaque recherche/édition/suppression
 // d'un aliment, remplacé par un accès Map en O(1)). Reconstruit après chaque
@@ -646,48 +676,11 @@ const todayKey = () => {
   return `${y}-${m}-${day}`;
 };
 
-const DEFAULT_PRODUCTS = [
-["FOL EPI",287,19,0,0],["POULET DORÉ AU FOUR RANOU",102,20,2,1],
-["WHEY PROTEINE INSHAPE",386,77,5.8,7.8],["OEUF PLEINE FORME FERMIER",140,13,10,0],
-["FILET DE POULET",120,23,0,0],["BOEUF (BROCHETTE)",135,21,0,0],
-["OIGNON",40,1,0,0],["POIVRON",30,0,0,0],["CHAMPIGNONS BRUN DE PARIS",25,3,0,0],
-["POMME DE TERRE",80,1,0,17],["BROCOLI INTERMARCHÉ",20,1,0,0],
-["RIZ BASMATI INTERMARCHÉ BIO",350,7.4,0.6,78],["CUBE MAGGI BIO BOEUF",243,0,0,0],
-["MAIZENA",355,0,0,0],["CARRÉ FRAIS 0%",85,16,0.3,4.5],
-["STEACK 5% LIDL SURGELÉ",133,22,0,0],["PARMESAN INTERMARCHÉ",402,32,30,0],
-["DINDE CARREFOUR",103,22,0,0],["FILET DE SARDINE CIT&BAS SAUPIQUET",144,17,0,0],
-["THON ENTIER NATUREL PETIT NAVIRE",109,25,1,0],["CREVETTE ROSES INTERMARCHÉ",60,12,0.8,0],
-["HUILE D'OLIVE PUGET",900,0,100,0],["COLIN SURGELÉ INTERMARCHÉ",75,17,0.7,0],
-["PAVE CHARAL",115,23,2.3,0.6],["CANCOILLOTTE NATURE",153,15,9.7,1.4],
-["RATATOUILLE CASSEGRAIN",72,1.3,4.1,5.7],["CAROTTE RAPEE BONDUELLE",63,0.7,3.5,6],
-["PIZZA PEPPERONI PAN ENV 740G",281,12,13,27],["SAUCISSES LENTILLES RANOU",99,6.2,4.2,7.9],
-["DINDE DOREE AU FOUR RANOU",104,22,1.3,1],["BETTERAVE BONDUELLE",51,1.5,1,7.5],
-["COLESLAW BONDUELLE",116,1,9,6.5],["CAROTTE RAPÉE MARTINET",79,1,5.2,5.6],
-["CELERI BONDUELLE",138,2,12,4],["MINI CROQUE PICARD",174,9.2,7.5,17],
-["MINI PIZZA PICARD",205,9.3,6.7,26],["MOZZA STICK PICARD",292,10,11,36],
-["BOUCHÉES PICARD",309,12,19,21],["MINI NAAN PICARD",280,8.3,12,35],
-["MINI FEUILLETÉ SAUCISSE PICARD",288,8.9,18,22],["BAGUETTE",270,8.1,1.5,54],
-["RIZ LONG UNCLE B MICRONDE",162,4,0.5,35],["RIZ BASMATI UNCLE B MICRONDE 450 G",141,3.3,1.3,29],
-["JAMBON -25% DE SEL RANOU",113,21,3.1,0.5],["POMME DE TERRE SOUS VIDE",70,1.9,0.5,14],
-["COTTAGE CHEESE DANONE",88,12,3.7,1.6],["BARRE PROT",396,33,9.5,42],
-["RIZ BASMATI UNCLE B MICRONDE 220G",142,3.1,1.6,29],["RIZ BASMATI BIO LIDL",354,6.7,0.4,80.4],
-["JAMBON -25% DE SEL LIDL",100,19,2,1.5],["ST MORET 8%",132,10,8,5],
-["POIS CHICHES LIDL",111,6.7,2.1,12],["PARMESAN LIDL",402,32,30,0]
-];
+// Aucun aliment ni pesée n'est préchargé : une première ouverture démarre avec
+// des listes vides, remplies uniquement par ce que l'utilisateur ajoute lui-même.
+const DEFAULT_PRODUCTS = [];
 
-const DEFAULT_WEIGHTS = [
-["2026-06-15",119.3],["2026-06-16",119.1],["2026-06-17",119.1],["2026-06-18",119],
-["2026-06-19",118.7],["2026-06-20",118.6],["2026-06-21",117.7],["2026-06-22",116.4],
-["2026-06-23",117.4],["2026-06-24",118.2],["2026-06-25",117.7],["2026-06-26",117.2],
-["2026-06-27",116.7],["2026-06-28",116.4],["2026-06-29",116.7],["2026-06-30",116.5],
-["2026-07-01",116.2],["2026-07-02",116.1],["2026-07-03",115.3],["2026-07-04",114.6],
-["2026-07-05",113.1],["2026-07-06",114.4],["2026-07-07",114.4],["2026-07-08",114],
-["2026-07-09",113.7],["2026-07-10",113.4],["2026-07-11",113.5],["2026-07-12",113],
-["2026-07-13",115.4],["2026-07-14",115.3],["2026-07-15",114.7],["2026-07-16",113.8],
-["2026-07-17",113.8],["2026-07-18",113.7],["2026-07-19",113.2],["2026-07-20",112.8],
-["2026-07-21",112.6],["2026-07-22",111.5],["2026-07-23",110.6],["2026-07-24",111.3],
-["2026-07-26",110.3],["2026-07-27",111.7],["2026-07-28",111.3],["2026-07-29",111.2]
-];
+const DEFAULT_WEIGHTS = [];
 
 function uid(){ return Math.random().toString(36).slice(2,10); }
 
@@ -749,6 +742,10 @@ async function loadAll(){
     const r = await window.storage.get('settings');
     settings = Object.assign({}, DEFAULT_SETTINGS, JSON.parse(r.value));
   }catch(e){ await window.storage.set('settings', JSON.stringify(settings)); }
+  try{
+    const r = await window.storage.get('dayNames');
+    dayNames = JSON.parse(r.value);
+  }catch(e){ dayNames = {}; await window.storage.set('dayNames', JSON.stringify(dayNames)); }
 }
 async function saveProducts(){
   // on ne sauvegarde jamais nameLower : c'est une donnée dérivée recalculée au chargement
@@ -757,6 +754,67 @@ async function saveProducts(){
 async function saveLogs(){ await window.storage.set('logs', JSON.stringify(logs)); }
 async function saveWeights(){ await window.storage.set('weights', JSON.stringify(weights)); }
 async function saveSettings(){ await window.storage.set('settings', JSON.stringify(settings)); }
+async function saveDayNames(){ await window.storage.set('dayNames', JSON.stringify(dayNames)); }
+
+/* ---------- export / import (sauvegarde manuelle) ----------
+   Filet de sécurité indépendant de la cause exacte d'une perte de données
+   (changement d'appareil, réinstallation, fichier remplacé par une nouvelle
+   version...) : tout ce que l'app stocke (produits, journal, pesées, réglages,
+   noms de jours) tient dans un seul fichier .json que l'utilisateur garde de
+   son côté et peut réimporter à tout moment pour tout restaurer d'un coup. */
+async function exportData(){
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    version: 1,
+    products: products.map(({nameLower, ...p})=>p),
+    logs, weights, settings, dayNames
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `suivi-sauvegarde-${todayKey()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  showToast('Sauvegarde exportée');
+}
+
+$('importDataInput').addEventListener('change', async e=>{
+  const file = e.target.files && e.target.files[0];
+  e.target.value = ''; // permet de réimporter le même fichier une 2e fois si besoin
+  if(!file) return;
+  const status = $('backupStatus');
+  askConfirm({
+    title: 'Importer cette sauvegarde ?',
+    message: `Toutes les données actuelles de l'app (aliments, journal, pesées, profil) seront remplacées par le contenu de « ${file.name} ». Cette action est irréversible.`,
+    actionLabel: 'Importer et remplacer',
+    onConfirm: async ()=>{
+      try{
+        const text = await file.text();
+        const data = JSON.parse(text);
+        if(!data || typeof data!=='object' || !Array.isArray(data.products)){
+          throw new Error('format de fichier invalide');
+        }
+        products = data.products.map(withNameLower);
+        reindexProducts();
+        logs = data.logs || {};
+        weights = data.weights || [];
+        settings = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
+        dayNames = data.dayNames || {};
+        await Promise.all([saveProducts(), saveLogs(), saveWeights(), saveSettings(), saveDayNames()]);
+        render();
+        status.textContent = '';
+        showToast('Sauvegarde importée');
+      }catch(err){
+        console.error('importData error', err);
+        status.textContent = "Ce fichier ne semble pas être une sauvegarde valide de l'app.";
+        status.className = 'off-status err';
+      }
+    }
+  });
+});
 
 /* ---------- tabs ---------- */
 const TAB_ORDER = ['journal','repas','aliments','profil'];
@@ -765,11 +823,17 @@ const SLIDE_MS = 260; // durée de la transition de glissement entre onglets
 // Met à jour l'état de l'app pour un onglet donné (nav active, add-bar, sauvegarde
 // profil, rendu) mais NE touche PAS aux animations : c'est goToTab() qui les gère,
 // pour pouvoir enchaîner state + slide proprement au clic comme au swipe.
+// Ces deux listes sont statiques (4 boutons d'onglet, 4 écrans, jamais ajoutés/retirés
+// du DOM) : on les résout une seule fois plutôt que de refaire un querySelectorAll
+// sur tout le document à chaque changement d'onglet (donc à chaque tap ou swipe).
+const TAB_BTNS = document.querySelectorAll('.tab-btn');
+const SCREEN_ELS = document.querySelectorAll('.screen');
+
 async function applyTabState(screen){
   const leavingProfil = currentTab === 'profil' && screen !== 'profil';
 
-  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.screen===screen));
-  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  TAB_BTNS.forEach(b=>b.classList.toggle('active', b.dataset.screen===screen));
+  SCREEN_ELS.forEach(s=>s.classList.remove('active'));
   currentTab = screen;
   $('screen-'+currentTab).classList.add('active');
   const addBar = $('addBarBtn');
@@ -840,7 +904,7 @@ async function goToTab(screen, direction){
   });
 }
 
-document.querySelectorAll('.tab-btn').forEach(btn=>{
+TAB_BTNS.forEach(btn=>{
   btn.addEventListener('click', ()=>goToTab(btn.dataset.screen));
 });
 
@@ -1261,6 +1325,36 @@ function deleteProductFromModal(){
   confirmDeleteProduct(editingProductId);
 }
 
+// Interroge Open Food Facts pour un code-barres et renvoie les macros /100g.
+// Centralise la logique réseau + gestion d'erreurs auparavant dupliquée à
+// l'identique (~30 lignes) dans lookupBarcode() et lookupBarcodeInLog() :
+// un seul endroit à maintenir si l'API ou le format de réponse change.
+// En cas d'erreur "métier" (HTTP KO, produit introuvable), rejette avec
+// { userMessage } déjà prêt à afficher ; les erreurs réseau (fetch qui throw)
+// remontent telles quelles et sont traitées par l'appelant comme un catch générique.
+async function fetchOFFProduct(code){
+  const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json`, {
+    headers: { 'Accept': 'application/json' }
+  });
+  if(!res.ok){
+    throw { userMessage: `Open Food Facts a répondu une erreur (code ${res.status}). Réessaie dans un instant.` };
+  }
+  const data = await res.json();
+  if(data.status!==1 || !data.product){
+    throw { userMessage: "Produit introuvable sur Open Food Facts. Tu peux le créer manuellement via \"+ Créer un nouvel aliment\"." };
+  }
+  const p = data.product;
+  const n = p.nutriments || {};
+  return {
+    name: p.product_name || p.generic_name || 'Produit sans nom',
+    brands: p.brands || 'marque inconnue',
+    cal: round1(n['energy-kcal_100g'] ?? n['energy-kcal'] ?? ''),
+    prot: round1(n['proteins_100g'] ?? ''),
+    lip: round1(n['fat_100g'] ?? ''),
+    gluc: round1(n['carbohydrates_100g'] ?? '')
+  };
+}
+
 async function lookupBarcode(){
   // on retire tout ce qui n'est pas un chiffre : espaces, tirets copiés-collés, etc.
   const code = $('barcodeInput').value.replace(/\D/g, '');
@@ -1270,30 +1364,16 @@ async function lookupBarcode(){
   status.textContent='Recherche sur Open Food Facts...';
   status.className='off-status loading';
   try{
-    const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json`, {
-      headers: { 'Accept': 'application/json' }
-    });
-    if(!res.ok){
-      status.textContent = `Open Food Facts a répondu une erreur (code ${res.status}). Réessaie dans un instant.`;
-      status.className='off-status err';
-      return;
-    }
-    const data = await res.json();
-    if(data.status!==1 || !data.product){
-      status.textContent="Produit introuvable sur Open Food Facts. Remplis les champs manuellement.";
-      status.className='off-status err';
-      return;
-    }
-    const p = data.product;
-    const n = p.nutriments || {};
-    $('prodName').value = p.product_name || p.generic_name || 'Produit sans nom';
-    $('prodCal').value = round1(n['energy-kcal_100g'] ?? n['energy-kcal'] ?? '');
-    $('prodProt').value = round1(n['proteins_100g'] ?? '');
-    $('prodLip').value = round1(n['fat_100g'] ?? '');
-    $('prodGluc').value = round1(n['carbohydrates_100g'] ?? '');
-    status.textContent = `Trouvé : ${p.product_name || 'produit'} (${p.brands || 'marque inconnue'})`;
+    const p = await fetchOFFProduct(code);
+    $('prodName').value = p.name;
+    $('prodCal').value = p.cal;
+    $('prodProt').value = p.prot;
+    $('prodLip').value = p.lip;
+    $('prodGluc').value = p.gluc;
+    status.textContent = `Trouvé : ${p.name} (${p.brands})`;
     status.className='off-status ok';
   }catch(e){
+    if(e && e.userMessage){ status.textContent = e.userMessage; status.className='off-status err'; return; }
     console.error('lookupBarcode error', e);
     status.textContent = "Erreur réseau lors de la recherche (vérifie ta connexion).";
     status.className='off-status err';
@@ -1327,29 +1407,14 @@ async function lookupBarcodeInLog(){
   status.textContent='Recherche sur Open Food Facts...';
   status.className='off-status loading';
   try{
-    const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json`, {
-      headers: { 'Accept': 'application/json' }
-    });
-    if(!res.ok){
-      status.textContent = `Open Food Facts a répondu une erreur (code ${res.status}). Réessaie dans un instant.`;
-      status.className='off-status err';
-      return;
-    }
-    const data = await res.json();
-    if(data.status!==1 || !data.product){
-      status.textContent="Produit introuvable sur Open Food Facts. Tu peux le créer manuellement via \"+ Créer un nouvel aliment\".";
-      status.className='off-status err';
-      return;
-    }
-    const p = data.product;
-    const n = p.nutriments || {};
+    const found = await fetchOFFProduct(code);
     const newP = withNameLower({
       id: uid(),
-      name: p.product_name || p.generic_name || 'Produit sans nom',
-      cal: round1(n['energy-kcal_100g'] ?? n['energy-kcal'] ?? 0) || 0,
-      prot: round1(n['proteins_100g'] ?? 0) || 0,
-      lip: round1(n['fat_100g'] ?? 0) || 0,
-      gluc: round1(n['carbohydrates_100g'] ?? 0) || 0,
+      name: found.name,
+      cal: found.cal || 0,
+      prot: found.prot || 0,
+      lip: found.lip || 0,
+      gluc: found.gluc || 0,
       barcode: code
     });
     products.push(newP);
@@ -1363,13 +1428,21 @@ async function lookupBarcodeInLog(){
     status.className = 'off-status ok';
     $('logQty').focus();
   }catch(e){
+    if(e && e.userMessage){ status.textContent = e.userMessage; status.className='off-status err'; return; }
     console.error('lookupBarcodeInLog error', e);
     status.textContent = "Erreur réseau lors de la recherche (vérifie ta connexion).";
     status.className='off-status err';
   }
 }
 
-/* ---------- scanner code-barres (caméra) ---------- */
+/* ---------- scan code-barres/QR à partir d'une photo ----------
+   Avant : flux vidéo caméra en direct (Html5Qrcode.start), qui posait des soucis
+   de mise en page/permissions sur certains mobiles et gardait la caméra active.
+   Maintenant : on utilise l'appareil photo natif du téléphone (input file avec
+   capture="environment", qui ouvre directement l'appli caméra native) pour prendre
+   UNE photo, puis on l'analyse une seule fois avec Html5Qrcode.scanFile(). Plus
+   simple, plus fiable (l'autofocus/l'exposition natifs sont meilleurs qu'un flux
+   vidéo web), et la caméra se referme d'elle-même après la photo. */
 let html5QrcodeScanner = null;
 let html5QrcodeLibPromise = null;
 
@@ -1389,115 +1462,82 @@ function loadHtml5QrcodeLib(){
   return html5QrcodeLibPromise;
 }
 
-// Laisse le temps au navigateur de terminer la mise en page de la modale
-// (display:none -> flex) avant de mesurer/démarrer la caméra dans #qrReader :
-// sans ça, sur certains mobiles, le conteneur est encore mesuré à 0x0 et le
-// scanner démarre avec une taille de vidéo nulle, donc rien ne se lit jamais.
-function nextFrame(){
-  return new Promise(resolve => requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-}
-
+// Formats reconnus sur la photo : les codes-barres produit habituels (EAN/UPC/CODE128)
+// + QR_CODE, au cas où un produit ou un lien serait encodé en QR plutôt qu'en code-barres.
 const barcodeFormats = ()=>[
   Html5QrcodeSupportedFormats.EAN_13,
   Html5QrcodeSupportedFormats.EAN_8,
   Html5QrcodeSupportedFormats.UPC_A,
   Html5QrcodeSupportedFormats.UPC_E,
-  Html5QrcodeSupportedFormats.CODE_128
+  Html5QrcodeSupportedFormats.CODE_128,
+  Html5QrcodeSupportedFormats.QR_CODE
 ];
 
 // contexte du scan en cours : 'product' (modale Nouvel aliment) ou 'log' (Ajouter au journal),
 // pour savoir quel champ remplir et quelle recherche lancer une fois un code détecté.
 let scanContext = 'product';
 
-async function openBarcodeScanner(context){
+// Déclenche l'appareil photo natif (pas notre modale — c'est l'appli caméra du
+// téléphone qui prend l'écran). On repart de zéro à chaque appel (value='') pour
+// que reprendre une 2e photo redéclenche bien l'événement 'change' même si elle
+// porte le même nom de fichier que la précédente.
+function openBarcodeScanner(context){
   scanContext = context || 'product';
+  const input = $('barcodePhotoInput');
+  input.value = '';
+  input.click();
+}
+
+async function onBarcodePhotoSelected(e){
+  const file = e.target.files && e.target.files[0];
+  if(!file) return;
   const status = $('scannerStatus');
-  scanLocked = false;
-  status.textContent = 'Chargement du scanner...';
+  const preview = $('scannedPhotoPreview');
+  if(preview.src) URL.revokeObjectURL(preview.src);
+  preview.src = URL.createObjectURL(file);
+  preview.style.display = 'block';
+  status.textContent = 'Analyse de la photo...';
   status.className = 'off-status loading';
-  $('qrReader').classList.remove('scan-flash');
   openModal('modalScanner');
   try{
     await loadHtml5QrcodeLib();
-    await nextFrame();
-    status.textContent = 'Vise le code-barres avec la caméra...';
-    status.className = 'off-status';
     if(!html5QrcodeScanner){
-      html5QrcodeScanner = new Html5Qrcode('qrReader');
+      html5QrcodeScanner = new Html5Qrcode('qrReader', { formatsToSupport: barcodeFormats() });
     }
-    const scanConfig = { fps: 10, qrbox: { width: 260, height: 140 }, formatsToSupport: barcodeFormats() };
-    try{
-      // 1er essai : caméra arrière via facingMode (fonctionne sur la grande majorité des tel).
-      await html5QrcodeScanner.start(
-        { facingMode: { exact: 'environment' } },
-        scanConfig,
-        (decodedText)=>onBarcodeScanned(decodedText),
-        ()=>{} // échecs de lecture image par image : on ignore, c'est normal
-      );
-    }catch(firstErr){
-      // Repli : certains appareils (surtout desktop, ou vieux Android) n'ont pas
-      // de caméra qui matche exactement "environment". On liste les caméras
-      // disponibles et on prend la dernière (souvent la caméra arrière).
-      const cameras = await Html5Qrcode.getCameras();
-      if(!cameras || !cameras.length) throw firstErr;
-      const cam = cameras.find(c=>/back|arri|rear|environment/i.test(c.label)) || cameras[cameras.length-1];
-      await html5QrcodeScanner.start(
-        cam.id,
-        scanConfig,
-        (decodedText)=>onBarcodeScanned(decodedText),
-        ()=>{}
-      );
-    }
-  }catch(e){
-    console.error('openBarcodeScanner error', e);
-    const detail = (e && (e.message || e.name)) ? ` (${e.message || e.name})` : '';
-    status.textContent = `Impossible d'accéder à la caméra${detail}. Tu peux entrer le code-barres à la main.`;
+    const decodedText = await html5QrcodeScanner.scanFile(file, false);
+    status.textContent = `✅ Code détecté : ${decodedText}`;
+    status.className = 'off-status ok';
+    if(navigator.vibrate){ try{ navigator.vibrate(80); }catch(err){} }
+    setTimeout(()=>{
+      closeScanner();
+      showToast(`Code scanné : ${decodedText}`);
+      if(scanContext==='log'){
+        $('logBarcodeInput').value = decodedText;
+        lookupBarcodeInLog();
+      } else {
+        $('barcodeInput').value = decodedText;
+        lookupBarcode();
+      }
+    }, 500);
+  }catch(err){
+    // scanFile rejette simplement quand aucun code n'est trouvé sur l'image :
+    // ce n'est pas une erreur technique, juste une photo à reprendre.
+    console.error('scanFile error', err);
+    status.textContent = "Aucun code détecté sur cette photo. Réessaie avec un cadrage net et bien éclairé.";
     status.className = 'off-status err';
   }
 }
+$('barcodePhotoInput').addEventListener('change', onBarcodePhotoSelected);
 
-async function stopBarcodeScanner(){
-  if(html5QrcodeScanner && html5QrcodeScanner.isScanning){
-    try{ await html5QrcodeScanner.stop(); }catch(e){}
-  }
-}
-
-async function closeScanner(){
-  scanLocked = false;
-  await stopBarcodeScanner();
+function closeScanner(){
   closeModal('modalScanner');
+  const preview = $('scannedPhotoPreview');
+  if(preview.src){ URL.revokeObjectURL(preview.src); preview.src=''; }
+  preview.style.display = 'none';
 }
 $('modalScanner').addEventListener('click', e=>{
   if(e.target.id==='modalScanner') closeScanner();
 });
-
-// verrou pour éviter que plusieurs frames déclenchent onBarcodeScanned en boucle
-// pendant le court délai où on affiche le message "code détecté"
-let scanLocked = false;
-
-async function onBarcodeScanned(decodedText){
-  if(scanLocked) return;
-  scanLocked = true;
-  const status = $('scannerStatus');
-  // feedback immédiat : message + flash visuel sur la zone caméra, avant de fermer
-  status.textContent = `✅ Code détecté : ${decodedText}`;
-  status.className = 'off-status ok';
-  $('qrReader').classList.add('scan-flash');
-  if(navigator.vibrate) { try{ navigator.vibrate(80); }catch(e){} }
-  setTimeout(async ()=>{
-    await stopBarcodeScanner();
-    closeModal('modalScanner');
-    $('qrReader').classList.remove('scan-flash');
-    showToast(`Code scanné : ${decodedText}`);
-    if(scanContext==='log'){
-      $('logBarcodeInput').value = decodedText;
-      lookupBarcodeInLog();
-    } else {
-      $('barcodeInput').value = decodedText;
-      lookupBarcode();
-    }
-  }, 450);
-}
 
 async function saveProduct(){
   const name = $('prodName').value.trim();
@@ -1600,9 +1640,16 @@ function renderJours(){
   list.innerHTML = dates.map(d=>{
     const entries = logs[d];
     const t = sumMacros(entries);
+    const customName = dayNames[d];
+    // le nom personnalisé remplace la date en titre (et la date repasse en petite ligne
+    // secondaire) ; sans nom personnalisé, la date reste le titre comme avant.
+    const titleHtml = customName
+      ? `<div class="date day-name" data-date="${d}">${escapeHtml(customName)}</div>
+         <div class="sub day-date-sub">${formatDateFr(d)}</div>`
+      : `<div class="date day-name" data-date="${d}">${formatDateFr(d)}</div>`;
     return `<div class="day-item" data-date="${d}">
       <div>
-        <div class="date">${formatDateFr(d)}</div>
+        ${titleHtml}
         <div class="sub">${Math.round(t.cal)} kcal · ${Math.round(t.prot)}g P · ${Math.round(t.lip)}g L · ${Math.round(t.gluc)}g G · ${entries.length} aliment${entries.length>1?'s':''}</div>
       </div>
       <span class="chev">›</span>
@@ -1611,7 +1658,12 @@ function renderJours(){
 }
 $('joursList').addEventListener('click', e=>{
   const el = e.target.closest('.day-item');
-  if(el) openDayDetail(el.dataset.date);
+  if(!el) return;
+  // taper sur le titre (nom du repas / date) ouvre directement le renommage ;
+  // taper ailleurs sur la ligne ouvre la modale en vue normale. C'est toujours
+  // la même (unique) modale de détail dans les deux cas.
+  const startEditing = !!e.target.closest('.day-name');
+  openDayDetail(el.dataset.date, startEditing);
 });
 
 function pushEntryToToday(e){
@@ -1626,11 +1678,11 @@ function pushEntryToToday(e){
 // la modale reste ouverte pendant qu'une action modifie logs.
 let dayDetailDate = null;
 
-function openDayDetail(date){
+function openDayDetail(date, startEditing){
   dayDetailDate = date;
   const entries = logs[date] || [];
   const t = sumMacros(entries);
-  $('dayDetailTitle').textContent = formatDateFr(date);
+  renderDayDetailTitle();
   $('dayCal').textContent = Math.round(t.cal);
   $('dayProt').textContent = Math.round(t.prot)+'g';
   $('dayLip').textContent = Math.round(t.lip)+'g';
@@ -1650,7 +1702,72 @@ function openDayDetail(date){
     </div>`).join('');
 
   openModal('modalDayDetail');
+  if(startEditing) setTimeout(startEditDayTitle, 200); // laisse la modale finir de s'ouvrir avant de passer en édition
 }
+
+// Affiche le titre du jour en mode lecture (nom personnalisé + date en sous-titre,
+// ou juste la date s'il n'y a pas de nom personnalisé).
+function renderDayDetailTitle(){
+  const customName = dayNames[dayDetailDate];
+  const titleEl = $('dayDetailTitle');
+  const dateSub = $('dayDetailDateSub');
+  $('dayDetailTitleRow').style.display = 'flex';
+  $('dayDetailTitleInput').style.display = 'none';
+  if(customName){
+    titleEl.textContent = customName;
+    // date réelle + lien pour revenir au nom par défaut (la date), sans repasser
+    // par le mode édition : un seul tap suffit.
+    dateSub.innerHTML = `${escapeHtml(formatDateFr(dayDetailDate))} · <span id="resetDayNameLink" style="text-decoration:underline; cursor:pointer;">Réinitialiser</span>`;
+    dateSub.style.display = 'block';
+  } else {
+    titleEl.textContent = formatDateFr(dayDetailDate);
+    dateSub.style.display = 'none';
+  }
+}
+// Délégation (le lien est recréé à chaque renderDayDetailTitle, donc on ne
+// réattache pas un listener dessus à chaque fois : on écoute sur le conteneur parent).
+$('dayDetailDateSub').addEventListener('click', async e=>{
+  if(!e.target.closest('#resetDayNameLink') || !dayDetailDate) return;
+  delete dayNames[dayDetailDate];
+  await saveDayNames();
+  renderDayDetailTitle();
+  showToast('Nom réinitialisé');
+  if(currentTab==='repas') renderJours();
+});
+
+// Renommage en ligne : un tap sur le titre bascule directement en champ de
+// saisie, dans la même modale (pas de modale séparée). La date affichée dessous
+// n'est là qu'en lecture et n'est jamais modifiée par ce renommage. Réutilisée
+// à la fois par le clic sur le titre dans la modale, et par le clic sur le titre
+// depuis la liste "Repas" (qui ouvre direct en mode édition, comme avant la fusion).
+let cancelingDayTitleEdit = false;
+function startEditDayTitle(){
+  if(!dayDetailDate) return;
+  const input = $('dayDetailTitleInput');
+  $('dayDetailTitleRow').style.display = 'none';
+  $('dayDetailDateSub').style.display = 'none';
+  input.style.display = 'block';
+  input.value = dayNames[dayDetailDate] || '';
+  input.placeholder = formatDateFr(dayDetailDate);
+  input.focus();
+  input.select();
+}
+$('dayDetailTitleRow').addEventListener('click', startEditDayTitle);
+async function commitDayDetailTitle(){
+  if(cancelingDayTitleEdit){ cancelingDayTitleEdit = false; renderDayDetailTitle(); return; }
+  if(!dayDetailDate) return;
+  const name = $('dayDetailTitleInput').value.trim();
+  if(name){ dayNames[dayDetailDate] = name; } else { delete dayNames[dayDetailDate]; }
+  await saveDayNames();
+  renderDayDetailTitle();
+  if(currentTab==='repas') renderJours();
+}
+$('dayDetailTitleInput').addEventListener('blur', commitDayDetailTitle);
+$('dayDetailTitleInput').addEventListener('keydown', e=>{
+  if(e.key==='Enter'){ e.preventDefault(); $('dayDetailTitleInput').blur(); }
+  else if(e.key==='Escape'){ e.preventDefault(); cancelingDayTitleEdit = true; $('dayDetailTitleInput').blur(); }
+});
+
 // Délégation posée une seule fois (au lieu de re-attacher un listener par aliment
 // à chaque ouverture de la modale détail d'un jour).
 $('dayFoodsList').addEventListener('click', async e=>{
@@ -2164,6 +2281,13 @@ function render(){
 
 /* ---------- init ---------- */
 (async function init(){
+  // Demande au navigateur de ne jamais purger automatiquement le stockage de
+  // cette app sous pression mémoire/espace disque (n'a pas d'effet sur les cas
+  // où l'icône est supprimée/réinstallée ou où l'historique Safari est effacé —
+  // ça reste géré côté utilisateur — mais protège contre les évictions "silencieuses").
+  if(navigator.storage && navigator.storage.persist){
+    try{ await navigator.storage.persist(); }catch(e){}
+  }
   await loadAll();
   render();
   // rappel automatique de la pesée du matin si pas encore fait aujourd'hui
