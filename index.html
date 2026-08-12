@@ -1557,20 +1557,15 @@ let nativeActive = false;
 // Auparavant la contrainte était en "ideal" (simple préférence, que le
 // navigateur pouvait ignorer et retomber sur la caméra avant/par défaut) —
 // on part maintenant en "exact" comme premier essai, avec ce vrai repli.
-// Choisit explicitement le deviceId de la caméra arrière, au lieu de faire
-// confiance à la contrainte facingMode : sur certains téléphones/navigateurs,
-// facingMode:'environment' est mal interprété et donne quand même la caméra
-// selfie. En listant nous-mêmes les caméras par leur nom, on ne dépend plus de
-// cette interprétation et on choisit nous-mêmes la bonne.
-// Retourne un deviceId (string) si une caméra arrière a pu être identifiée,
-// sinon null (l'appelant retombera alors sur la contrainte facingMode classique).
-async function findBackCameraDeviceId(){
+// Repli par nom de caméra : utilisé UNIQUEMENT si la contrainte matérielle
+// facingMode s'avère insuffisante (voir getEnvironmentCameraStream ci-dessous).
+// Sur certains appareils aux noms de caméra génériques ("Camera 1", "Camera 2"
+// sans mot "avant/arrière"), ce repli par mots-clés peut lui-même se tromper
+// si aucune caméra ne contient l'un de ces mots — d'où l'ordre choisi plus bas :
+// on ne l'utilise qu'en dernier ressort, jamais en premier.
+async function findBackCameraDeviceId(excludeDeviceId){
   let devices = await navigator.mediaDevices.enumerateDevices();
   let cams = devices.filter(d=>d.kind==='videoinput');
-  // Les noms de caméra ne sont fournis par le navigateur qu'une fois la permission
-  // caméra déjà accordée : si on ne les a pas encore, on demande d'abord une caméra
-  // quelconque (déclenche la demande de permission), puis on ré-énumère avec les
-  // vrais noms, et on referme ce flux temporaire aussitôt.
   if(cams.length && cams.every(c=>!c.label)){
     try{
       const tmp = await navigator.mediaDevices.getUserMedia({ video:true });
@@ -1579,28 +1574,52 @@ async function findBackCameraDeviceId(){
       cams = devices.filter(d=>d.kind==='videoinput');
     }catch(e){ return null; }
   }
-  if(cams.length<2) return null; // un seul objectif (desktop/webcam) : rien à choisir
+  if(excludeDeviceId) cams = cams.filter(c=>c.deviceId!==excludeDeviceId);
+  if(!cams.length) return null;
   const back = cams.find(c=>/back|arri[eè]re|rear|environment/i.test(c.label))
             || cams.find(c=>!/front|avant|selfie|user|face/i.test(c.label));
   return back ? back.deviceId : null;
 }
 
 async function getEnvironmentCameraStream(){
-  const backId = await findBackCameraDeviceId();
   const videoConstraints = (deviceId)=> deviceId
     ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
     : { facingMode: { exact: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } };
+  // 1) on fait confiance à la caractéristique matérielle de la caméra (c'est le
+  // système d'exploitation qui sait laquelle "regarde vers l'extérieur", pas une
+  // devinette sur son nom) : c'est la méthode la plus fiable quand elle marche.
+  let stream;
   try{
-    return await navigator.mediaDevices.getUserMedia({ video: videoConstraints(backId) });
+    stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints() });
   }catch(firstErr){
-    // dernier repli si le deviceId identifié échoue malgré tout (appareil débranché
-    // entre-temps, etc.) : on retente en listant les caméras une seconde fois.
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const cams = devices.filter(d=>d.kind==='videoinput');
-    if(!cams.length) throw firstErr;
-    const back = cams.find(c=>/back|arri|rear|environment/i.test(c.label)) || cams[cams.length-1];
-    return await navigator.mediaDevices.getUserMedia({ video: videoConstraints(back.deviceId) });
+    // La contrainte "environment" a été purement et simplement rejetée (aucune
+    // caméra ne matche exactement, arrive sur desktop/vieux Android) : repli
+    // sur la sélection par nom.
+    const backId = await findBackCameraDeviceId();
+    if(!backId) throw firstErr;
+    stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints(backId) });
   }
+
+  // 2) vérification réelle (pas une supposition) : on relit ce que le navigateur
+  // rapporte lui-même sur la caméra effectivement utilisée. Si malgré la
+  // contrainte "environment" il confirme que c'est la caméra selfie ("user"),
+  // on la ferme et on retente en choisissant nous-mêmes une autre caméra par
+  // son nom, en excluant explicitement celle qui vient d'être identifiée comme fautive.
+  const settings = stream.getVideoTracks()[0].getSettings ? stream.getVideoTracks()[0].getSettings() : {};
+  if(settings.facingMode === 'user'){
+    const wrongDeviceId = settings.deviceId;
+    stream.getTracks().forEach(t=>t.stop());
+    const backId = await findBackCameraDeviceId(wrongDeviceId);
+    if(backId){
+      stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints(backId) });
+    }
+    // si aucune autre caméra n'a pu être identifiée, on garde le flux d'origine
+    // (mieux vaut scanner avec la mauvaise caméra que ne pas scanner du tout) :
+    else {
+      stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints() });
+    }
+  }
+  return stream;
 }
 
 async function startNativeScanner(){
@@ -1704,20 +1723,15 @@ async function startFallbackScanner(){
     videoConstraints: { focusMode: 'continuous' }
   };
   try{
-    // On tente d'abord la caméra arrière identifiée explicitement par son nom
-    // (voir findBackCameraDeviceId) — plus fiable que facingMode seul, qui peut
-    // être mal interprété par certains téléphones et donner la caméra selfie.
-    const backId = await findBackCameraDeviceId();
-    if(backId){
-      await html5QrcodeScanner.start(backId, scanConfig, (decodedText)=>onBarcodeScanned(decodedText), ()=>{});
-    } else {
-      await html5QrcodeScanner.start(
-        { facingMode: { exact: 'environment' } },
-        scanConfig,
-        (decodedText)=>onBarcodeScanned(decodedText),
-        ()=>{} // échecs de lecture image par image : on ignore, c'est normal
-      );
-    }
+    // On fait confiance en premier à la caractéristique matérielle de la caméra
+    // (facingMode), pas à une devinette sur son nom : c'est la méthode la plus
+    // fiable quand le téléphone la supporte.
+    await html5QrcodeScanner.start(
+      { facingMode: { exact: 'environment' } },
+      scanConfig,
+      (decodedText)=>onBarcodeScanned(decodedText),
+      ()=>{} // échecs de lecture image par image : on ignore, c'est normal
+    );
   }catch(firstErr){
     // Repli : certains appareils (surtout desktop, ou vieux Android) n'ont pas
     // de caméra qui matche exactement "environment". On liste les caméras
@@ -1727,6 +1741,22 @@ async function startFallbackScanner(){
     const cam = cameras.find(c=>/back|arri|rear|environment/i.test(c.label)) || cameras[cameras.length-1];
     await html5QrcodeScanner.start(cam.id, scanConfig, (decodedText)=>onBarcodeScanned(decodedText), ()=>{});
   }
+  // Vérification réelle après coup : si malgré la contrainte "environment" la
+  // caméra effectivement démarrée est bien la selfie ("user"), on la relance
+  // explicitement sur une autre caméra choisie par son nom.
+  try{
+    const runningSettings = html5QrcodeScanner.getRunningTrackSettings && html5QrcodeScanner.getRunningTrackSettings();
+    if(runningSettings && runningSettings.facingMode === 'user'){
+      const wrongDeviceId = runningSettings.deviceId;
+      await html5QrcodeScanner.stop();
+      const backId = await findBackCameraDeviceId(wrongDeviceId);
+      if(backId){
+        await html5QrcodeScanner.start(backId, scanConfig, (decodedText)=>onBarcodeScanned(decodedText), ()=>{});
+      } else {
+        await html5QrcodeScanner.start({ facingMode: { exact: 'environment' } }, scanConfig, (decodedText)=>onBarcodeScanned(decodedText), ()=>{});
+      }
+    }
+  }catch(e){ console.error('vérification caméra arrière (repli) échouée', e); }
   try{
     const caps = html5QrcodeScanner.getRunningTrackCapabilities && html5QrcodeScanner.getRunningTrackCapabilities();
     setupTorch(null, caps);
