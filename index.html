@@ -1566,6 +1566,32 @@ const barcodeFormats = ()=>[
   Html5QrcodeSupportedFormats.UPC_E
 ];
 
+// deviceId de l'objectif arrière "principal", mis en cache après la première
+// détection pour ne pas relister les caméras (getCameras() a un coût non
+// négligeable) à chaque ouverture du scanner.
+let mainBackCameraId = null;
+
+// Choisit l'objectif arrière PRINCIPAL, pas juste "un" objectif arrière : sur les
+// téléphones multi-objectifs (iPhone Pro, Android haut de gamme), la caméra
+// grand-angle/téléobjectif fait souvent partie de la liste et facingMode:'environment'
+// seul ne garantit pas laquelle est choisie. Le grand-angle/téléobjectif fait en
+// général moins bien la mise au point rapprochée qu'exige la lecture d'un
+// code-barres, d'où l'intérêt de cibler explicitement l'objectif principal.
+async function pickMainBackCamera(){
+  if(mainBackCameraId) return mainBackCameraId;
+  const cameras = await Html5Qrcode.getCameras();
+  if(!cameras || !cameras.length) return null;
+  const isFront = c => /front|selfie|avant|user/i.test(c.label);
+  const isBack = c => /back|arri|rear|environment/i.test(c.label);
+  const isSecondaryLens = c => /ultra|wide|grand.?angle|t[ée]l[ée]|tele|zoom|0\.5x|2x|3x/i.test(c.label);
+  const backCams = cameras.filter(c => isBack(c) && !isFront(c));
+  const pool = backCams.length ? backCams : cameras.filter(c => !isFront(c));
+  const finalPool = pool.length ? pool : cameras;
+  const main = finalPool.find(c => !isSecondaryLens(c)) || finalPool[0];
+  mainBackCameraId = main.id;
+  return mainBackCameraId;
+}
+
 async function openBarcodeScanner(context){
   scanContext = context || 'product';
   const status = $('scannerStatus');
@@ -1591,21 +1617,33 @@ async function openBarcodeScanner(context){
       videoConstraints: { focusMode: 'continuous' }
     };
     try{
-      // 1er essai : caméra arrière via facingMode (fonctionne sur la grande majorité des tel).
+      // 1er essai : deviceId de l'objectif arrière PRINCIPAL, identifié explicitement
+      // (voir pickMainBackCamera) pour éviter qu'un téléphone multi-objectifs
+      // démarre sur le grand-angle/téléobjectif au lieu du capteur principal.
+      const mainCamId = await pickMainBackCamera();
+      if(!mainCamId) throw new Error('no camera detected');
       await html5QrcodeScanner.start(
-        { facingMode: { exact: 'environment' } },
+        mainCamId,
         scanConfig,
         (decodedText)=>onBarcodeScanned(decodedText),
         ()=>{} // échecs de lecture image par image : on ignore, c'est normal
       );
     }catch(firstErr){
-      // Repli : certains appareils (surtout desktop, ou vieux Android) n'ont pas
-      // de caméra qui matche exactement "environment". On liste les caméras
-      // disponibles et on prend la dernière (souvent la caméra arrière).
-      const cameras = await Html5Qrcode.getCameras();
-      if(!cameras || !cameras.length) throw firstErr;
-      const cam = cameras.find(c=>/back|arri|rear|environment/i.test(c.label)) || cameras[cameras.length-1];
-      await html5QrcodeScanner.start(cam.id, scanConfig, (decodedText)=>onBarcodeScanned(decodedText), ()=>{});
+      // Repli : deviceId indisponible/refusé (permissions changées, appareil
+      // désormais absent, etc.) ou aucune caméra listée avec un libellé exploitable.
+      // On invalide le cache et on retente via facingMode:'environment', qui
+      // fonctionne sur la grande majorité des téléphones même sans libellé fiable.
+      mainBackCameraId = null;
+      try{
+        await html5QrcodeScanner.start(
+          { facingMode: { exact: 'environment' } },
+          scanConfig,
+          (decodedText)=>onBarcodeScanned(decodedText),
+          ()=>{}
+        );
+      }catch(secondErr){
+        throw secondErr;
+      }
     }
     status.textContent = 'Vise le code-barres avec la caméra...';
     status.className = 'off-status';
