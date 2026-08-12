@@ -606,10 +606,6 @@
         style="display:none; position:absolute; top:10px; right:10px; z-index:3; width:36px; height:36px; border-radius:50%;
                background:rgba(21,24,29,.85); border:1px solid var(--border); color:var(--text);
                font-size:16px; align-items:center; justify-content:center; cursor:pointer;">💡</button>
-      <button id="switchCamBtn" onclick="switchCamera()" title="Changer de caméra"
-        style="display:none; position:absolute; top:10px; left:10px; z-index:3; width:36px; height:36px; border-radius:50%;
-               background:rgba(21,24,29,.85); border:1px solid var(--border); color:var(--text);
-               font-size:16px; align-items:center; justify-content:center; cursor:pointer;">🔄</button>
     </div>
     <div class="off-status" id="scannerStatus" style="margin-top:10px;"></div>
   </div>
@@ -1574,125 +1570,7 @@ const barcodeFormats = ()=>[
 // Certains navigateurs renvoient des labels en anglais, d'autres en français/langue
 // locale du téléphone : on couvre les deux.
 const FRONT_CAM_RE = /front|selfie|user|face|avant/i;
-const BACK_CAM_RE  = /back|rear|environment|arri[eè]re|world|dual|wide/i;
-
-// Liste des caméras détectées pendant la session de scan en cours, + index de
-// celle actuellement active dans cette liste. Alimentée dès qu'on a la permission
-// caméra (avant si possible), pour permettre le bouton "changer de caméra".
-let scanCameras = [];
-let scanCameraIndex = -1;
-let scanSwitchBusy = false;
-let currentScanConfig = null;
-
-// Choisit, parmi une liste de caméras, l'index le plus probable pour la caméra
-// arrière : on exclut d'abord tout ce qui ressemble à une frontale/selfie, puis
-// on préfère un label explicitement "arrière", sinon la première caméra restante.
-function pickBackCameraIndex(cameras){
-  const nonFrontIdx = cameras
-    .map((c,i)=>({label:c.label||'', i}))
-    .filter(({label})=>!FRONT_CAM_RE.test(label));
-  const back = nonFrontIdx.find(({label})=>BACK_CAM_RE.test(label));
-  if(back) return back.i;
-  if(nonFrontIdx.length) return nonFrontIdx[0].i;
-  return 0; // dernier recours : au moins la première de la liste
-}
-
-function updateSwitchCamBtnVisibility(){
-  $('switchCamBtn').style.display = scanCameras.length > 1 ? 'flex' : 'none';
-}
-
-// Démarre la caméra arrière avec repli en cascade, en excluant systématiquement
-// toute caméra dont le label sent la caméra frontale (le vieux code retombait sur
-// cameras[cameras.length-1], qui n'est pas fiablement la caméra arrière sur tous
-// les téléphones, notamment certains iPhone).
-async function startBackCamera(scanConfig){
-  currentScanConfig = scanConfig;
-  const onScan = (decodedText)=>onBarcodeScanned(decodedText);
-  const onFail = ()=>{}; // échecs de lecture image par image : on ignore, c'est normal
-
-  // 1er essai : lister directement les caméras avec leurs labels. Si ça marche,
-  // on connaît tout de suite les device id exacts, ce qui permet de démarrer sur
-  // l'arrière ET d'activer le bouton "changer de caméra" sans reconfiguration.
-  try{ scanCameras = await Html5Qrcode.getCameras(); }catch(e){ scanCameras = []; }
-
-  if(scanCameras.length){
-    scanCameraIndex = pickBackCameraIndex(scanCameras);
-    // getCameras() ouvre puis referme brièvement la caméra pour lire les labels.
-    // Sur iOS Safari, redemander l'accès trop vite juste après peut échouer
-    // ("Could not start video source") : une petite pause laisse le temps au
-    // système de bien libérer le flux avant qu'on le rouvre. Inoffensif sur Android.
-    if(isIOS()) await wait(200);
-    await html5QrcodeScanner.start(scanCameras[scanCameraIndex].id, scanConfig, onScan, onFail);
-    updateSwitchCamBtnVisibility();
-    return;
-  }
-
-  // Repli : getCameras() peut échouer si la permission caméra n'a pas encore
-  // été accordée sur certains navigateurs. On démarre via facingMode, qui
-  // déclenche lui-même la demande de permission.
-  try{
-    await html5QrcodeScanner.start({ facingMode: { exact: 'environment' } }, scanConfig, onScan, onFail);
-  }catch(firstErr){
-    await html5QrcodeScanner.start({ facingMode: 'environment' }, scanConfig, onScan, onFail);
-  }
-
-  // La permission est maintenant accordée : on retente de lister les caméras
-  // pour activer le bouton switch pour la suite (le flux en cours n'est pas
-  // interrompu, cet appel ne fait qu'énumérer les périphériques).
-  try{ scanCameras = await Html5Qrcode.getCameras(); }catch(e){ scanCameras = []; }
-  scanCameraIndex = scanCameras.length ? pickBackCameraIndex(scanCameras) : -1;
-  updateSwitchCamBtnVisibility();
-}
-
-// Empêche un await de rester bloqué indéfiniment (bug connu de html5-qrcode :
-// stop()/start() peuvent ne jamais se résoudre sur certains téléphones/versions
-// iOS Safari). Sans ça, un blocage silencieux donne l'impression que le bouton
-// "ne fait rien" alors qu'une promesse est juste restée pendante pour toujours.
-function withTimeout(promise, ms, label){
-  return Promise.race([
-    promise,
-    new Promise((_, reject)=>setTimeout(()=>reject(new Error(label+' timeout')), ms))
-  ]);
-}
-
-// Bascule vers la caméra suivante dans la liste détectée (boucle). Coupe puis
-// relance le flux avec le même scanConfig que le démarrage initial.
-async function switchCamera(){
-  if(scanSwitchBusy || !html5QrcodeScanner || scanCameras.length < 2) return;
-  scanSwitchBusy = true;
-  const status = $('scannerStatus');
-  const btn = $('switchCamBtn');
-  btn.disabled = true;
-  status.textContent = 'Changement de caméra...';
-  status.className = 'off-status loading';
-  try{
-    await withTimeout(stopBarcodeScanner(), 4000, 'stop');
-    // Même raison que dans startBackCamera : iOS Safari a besoin d'un court délai
-    // après avoir coupé le flux avant d'en rouvrir un nouveau, sous peine d'échec.
-    if(isIOS()) await wait(200);
-    scanCameraIndex = (scanCameraIndex + 1) % scanCameras.length;
-    const cam = scanCameras[scanCameraIndex];
-    await withTimeout(
-      html5QrcodeScanner.start(cam.id, currentScanConfig, (decodedText)=>onBarcodeScanned(decodedText), ()=>{}),
-      6000,
-      'start'
-    );
-    scanLocked = false;
-    status.textContent = 'Vise le code-barres avec la caméra...';
-    status.className = 'off-status';
-    try{
-      const caps = html5QrcodeScanner.getRunningTrackCapabilities && html5QrcodeScanner.getRunningTrackCapabilities();
-      setupTorch(caps);
-    }catch(e){}
-  }catch(e){
-    console.error('switchCamera error', e);
-    status.textContent = "Impossible de changer de caméra, réessaie ou ferme/rouvre le scanner.";
-    status.className = 'off-status err';
-  }finally{
-    scanSwitchBusy = false;
-    btn.disabled = false;
-  }
-}
+const BACK_CAM_RE  = /back|rear|environment|arri[eè]re|world|dual|wide|tele/i;
 
 // Détection iOS (iPhone/iPad, y compris iPadOS qui se déclare comme "Mac" avec
 // écran tactile) : sert uniquement à ajuster de petits réglages caméra, jamais
@@ -1704,6 +1582,78 @@ function isIOS(){
 
 function wait(ms){ return new Promise(resolve=>setTimeout(resolve, ms)); }
 
+// Une fois un flux démarré, vérifie — quand le navigateur expose l'info — que la
+// caméra réellement active n'est PAS la frontale. Certains appareils mentent ou
+// ont des labels ambigus ("Caméra 0"...) : cette vérification après coup est le
+// seul moyen fiable de détecter qu'on a quand même fini sur la selfie.
+function isRunningCameraFrontFacing(){
+  try{
+    const settings = html5QrcodeScanner.getRunningTrackSettings
+      ? html5QrcodeScanner.getRunningTrackSettings() : null;
+    return !!(settings && settings.facingMode === 'user');
+  }catch(e){ return false; }
+}
+
+// Force par tous les moyens disponibles le démarrage sur la caméra ARRIÈRE, et
+// n'accepte jamais de repli silencieux sur la frontale :
+//  1) énumère les caméras et essaie, dans l'ordre, chaque caméra dont le label
+//     n'est pas identifié comme frontale (les "arrière" identifiées d'abord) ;
+//  2) après chaque tentative, vérifie via les infos du flux réel (facingMode)
+//     que ce n'est pas la selfie qui a démarré, et rejette/réessaie sinon ;
+//  3) si aucun deviceId n'a fonctionné (ou si l'énumération échoue, p.ex.
+//     permission pas encore accordée), retente via facingMode "environment"
+//     (exact puis souple), qui laisse le navigateur choisir lui-même l'arrière ;
+//  4) si vraiment rien ne marche, échoue explicitement plutôt que de démarrer
+//     en silence sur la caméra frontale.
+async function startBackCamera(scanConfig){
+  const onScan = (decodedText)=>onBarcodeScanned(decodedText);
+  const onFail = ()=>{}; // échecs de lecture image par image : on ignore, c'est normal
+
+  let cameras = [];
+  try{ cameras = await Html5Qrcode.getCameras(); }catch(e){ cameras = []; }
+
+  if(cameras.length){
+    const nonFront = cameras.filter(c=>!FRONT_CAM_RE.test(c.label||''));
+    const back = nonFront.filter(c=>BACK_CAM_RE.test(c.label||''));
+    // Ordre d'essai : caméras clairement "arrière" d'abord, puis toute caméra
+    // non identifiée comme frontale — jamais une caméra explicitement frontale.
+    const candidates = [...back, ...nonFront.filter(c=>!back.includes(c))];
+
+    if(isIOS()) await wait(200); // laisse getCameras() bien relâcher la caméra avant de la rouvrir
+
+    for(const cam of candidates){
+      try{
+        await html5QrcodeScanner.start(cam.id, scanConfig, onScan, onFail);
+        if(isRunningCameraFrontFacing()){
+          await stopBarcodeScanner();
+          continue; // ce candidat a en fait démarré la frontale malgré son label : suivant
+        }
+        return; // succès
+      }catch(e){ /* ce device a échoué à démarrer, on tente le suivant */ }
+    }
+  }
+
+  // Repli : soit aucune caméra listée, soit aucun candidat n'a marché.
+  // On laisse le navigateur choisir lui-même via facingMode, ce qui contraint
+  // nativement le choix vers l'arrière sans dépendre des labels/device id.
+  try{
+    await html5QrcodeScanner.start({ facingMode: { exact: 'environment' } }, scanConfig, onScan, onFail);
+    if(!isRunningCameraFrontFacing()) return;
+    await stopBarcodeScanner();
+  }catch(e){}
+
+  try{
+    await html5QrcodeScanner.start({ facingMode: 'environment' }, scanConfig, onScan, onFail);
+    if(!isRunningCameraFrontFacing()) return;
+    await stopBarcodeScanner();
+  }catch(e){}
+
+  // Vraiment aucune caméra arrière trouvable (ou l'appareil n'en a pas, ex.
+  // webcam d'ordinateur) : on échoue clairement plutôt que de démarrer en
+  // silence sur la caméra frontale.
+  throw new Error("Aucune caméra arrière détectée sur cet appareil");
+}
+
 async function openBarcodeScanner(context){
   scanContext = context || 'product';
   const status = $('scannerStatus');
@@ -1712,9 +1662,6 @@ async function openBarcodeScanner(context){
   status.className = 'off-status loading';
   $('qrReader').classList.remove('scan-flash');
   $('torchBtn').style.display = 'none';
-  $('switchCamBtn').style.display = 'none';
-  scanCameras = [];
-  scanCameraIndex = -1;
   openModal('modalScanner');
   try{
     await loadHtml5QrcodeLib();
@@ -1749,7 +1696,11 @@ async function openBarcodeScanner(context){
         // Stabilise la résolution choisie : sans ça, Safari iOS a tendance à
         // sélectionner un flux 4:3 haute résolution plus lourd à décoder frame
         // par frame, ce qui ralentit la détection.
-        aspectRatio: { ideal: 1.7777777778 }
+        aspectRatio: { ideal: 1.7777777778 },
+        // Contrainte de secours en plus des essais explicites plus haut : si la
+        // lib retente un démarrage en interne avec ce videoConstraints seul,
+        // ça la pousse quand même vers l'arrière plutôt que vers la frontale.
+        facingMode: { ideal: 'environment' }
       }
     };
     await startBackCamera(scanConfig);
@@ -1762,7 +1713,7 @@ async function openBarcodeScanner(context){
   }catch(e){
     console.error('openBarcodeScanner error', e);
     const detail = (e && (e.message || e.name)) ? ` (${e.message || e.name})` : '';
-    status.textContent = `Impossible d'accéder à la caméra${detail}. Tu peux entrer le code-barres à la main.`;
+    status.textContent = `Impossible d'accéder à la caméra arrière${detail}. Tu peux entrer le code-barres à la main.`;
     status.className = 'off-status err';
   }
 }
