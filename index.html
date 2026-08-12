@@ -50,6 +50,20 @@
   .screen.active{display:block;}
   @keyframes fade{from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:translateY(0);}}
 
+  /* pull-to-refresh */
+  #pullWrap{position:relative; will-change:transform;}
+  #pullWrap.ptr-dragging{transition:none;}
+  #pullWrap.ptr-settling{transition:transform .25s cubic-bezier(.22,1,.36,1);}
+  .ptr-indicator{
+    position:absolute; top:-52px; left:0; right:0; height:52px;
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    color:var(--text-dim); font-size:12px; opacity:0; pointer-events:none;
+  }
+  .ptr-spinner{display:inline-block; font-size:16px; transform:rotate(0deg); transition:transform .15s linear;}
+  .ptr-indicator.ready .ptr-spinner{transform:rotate(180deg);}
+  .ptr-indicator.loading .ptr-spinner{animation:ptr-spin .7s linear infinite;}
+  @keyframes ptr-spin{from{transform:rotate(0deg);} to{transform:rotate(360deg);}}
+
   /* Rings */
   .rings-card{
     background:var(--surface);
@@ -67,7 +81,6 @@
   .ring-legend .label{color:var(--text-dim); display:flex; align-items:center;}
   .ring-legend .val{font-family:'JetBrains Mono',monospace; font-weight:600;}
   .ring-legend .val .goal{color:var(--text-faint); font-weight:400;}
-  .ring-refresh-btn{margin-top:12px; padding:5px 14px;}
 
   .section-title{
     font-size:12px; text-transform:uppercase; letter-spacing:.09em; color:var(--text-faint);
@@ -255,14 +268,20 @@
 </head>
 <body>
 
-<header class="top">
-  <div>
-    <div class="day" id="todayLabel">—</div>
-    <h1 id="greeting">Salut</h1>
+<div id="pullWrap">
+  <div class="ptr-indicator" id="ptrIndicator">
+    <span class="ptr-spinner" id="ptrSpinner">↻</span>
+    <span id="ptrLabel">Tire pour actualiser</span>
   </div>
-</header>
 
-<main>
+  <header class="top">
+    <div>
+      <div class="day" id="todayLabel">—</div>
+      <h1 id="greeting">Salut</h1>
+    </div>
+  </header>
+
+  <main>
 
   <!-- JOURNAL -->
   <section class="screen active" id="screen-journal">
@@ -302,7 +321,6 @@
           <div class="item"><span class="label"><span class="dot" style="background:var(--gluc)"></span>Gluc</span><span class="val mono" id="valGluc">0 <span class="goal">/150g</span></span></div>
         </div>
       </div>
-      <button class="mini-btn ring-refresh-btn" id="refreshJournalBtn">↻ Actualiser</button>
     </div>
 
     <div id="todayLog"></div>
@@ -391,7 +409,8 @@
     </div>
   </section>
 
-</main>
+  </main>
+</div>
 
 <div class="bottom-fixed">
   <button class="add-bar" id="addBarBtn" style="display:block;">+ Ajouter un aliment au journal</button>
@@ -725,54 +744,152 @@ async function saveWeights(){ await window.storage.set('weights', JSON.stringify
 async function saveSettings(){ await window.storage.set('settings', JSON.stringify(settings)); }
 
 /* ---------- tabs ---------- */
-document.querySelectorAll('.tab-btn').forEach(btn=>{
-  btn.addEventListener('click', async ()=>{
-    const leavingProfil = currentTab === 'profil' && btn.dataset.screen !== 'profil';
+const TAB_ORDER = ['journal','repas','aliments','profil'];
 
-    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
-    btn.classList.add('active');
-    document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
-    currentTab = btn.dataset.screen;
-    $('screen-'+currentTab).classList.add('active');
-    const addBar = $('addBarBtn');
-    if(currentTab==='journal'){
-      addBar.style.display = 'block';
-      addBar.textContent = '+ Ajouter un aliment au journal';
-      document.body.classList.add('has-addbar');
-    } else if(currentTab==='aliments'){
-      addBar.style.display = 'block';
-      addBar.textContent = '+ Ajouter un aliment';
-      document.body.classList.add('has-addbar');
-    } else {
-      addBar.style.display = 'none';
-      document.body.classList.remove('has-addbar');
-    }
+async function switchTab(screen){
+  if(screen===currentTab) return;
+  const leavingProfil = currentTab === 'profil' && screen !== 'profil';
 
-    if(leavingProfil){
-      // on quitte l'onglet Profil : on annule le debounce et on enregistre tout de suite,
-      // pour être sûr que le Journal affiche les cibles à jour, même si on change d'onglet vite.
-      clearTimeout(profileAutosaveTimer);
-      clearTimeout(goalsAutosaveTimer);
-      await saveProfileSilently();
-      await saveGoalsSilently();
-    }
-
-    render();
-  });
-});
-
-/* ---------- refresh (rings) ---------- */
-$('refreshJournalBtn').addEventListener('click', async ()=>{
-  const btn = $('refreshJournalBtn');
-  btn.disabled = true;
-  try{
-    await loadAll(); // recharge tout depuis le stockage (utile si modifié ailleurs)
-    render();
-    showToast('Actualisé');
-  } finally {
-    btn.disabled = false;
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.screen===screen));
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  currentTab = screen;
+  $('screen-'+currentTab).classList.add('active');
+  const addBar = $('addBarBtn');
+  if(currentTab==='journal'){
+    addBar.style.display = 'block';
+    addBar.textContent = '+ Ajouter un aliment au journal';
+    document.body.classList.add('has-addbar');
+  } else if(currentTab==='aliments'){
+    addBar.style.display = 'block';
+    addBar.textContent = '+ Ajouter un aliment';
+    document.body.classList.add('has-addbar');
+  } else {
+    addBar.style.display = 'none';
+    document.body.classList.remove('has-addbar');
   }
+
+  if(leavingProfil){
+    // on quitte l'onglet Profil : on annule le debounce et on enregistre tout de suite,
+    // pour être sûr que le Journal affiche les cibles à jour, même si on change d'onglet vite.
+    clearTimeout(profileAutosaveTimer);
+    clearTimeout(goalsAutosaveTimer);
+    await saveProfileSilently();
+    await saveGoalsSilently();
+  }
+
+  render();
+}
+
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>switchTab(btn.dataset.screen));
 });
+
+/* ---------- swipe horizontal (changer d'onglet) + tirer-vers-le-bas (actualiser) ---------- */
+(function setupGestures(){
+  const pullWrap = $('pullWrap');
+  const ptrIndicator = $('ptrIndicator');
+  const ptrLabel = $('ptrLabel');
+  const PTR_THRESHOLD = 60;   // distance "amortie" à atteindre pour déclencher le refresh
+  const PTR_MAX = 92;         // distance max de tirage (effet élastique)
+  const SWIPE_THRESHOLD = 60; // distance horizontale mini pour changer d'onglet
+
+  let startX=0, startY=0, dx=0, dy=0, gesture=null, refreshing=false;
+
+  function anyModalOpen(){
+    return !!document.querySelector('.modal-backdrop.active');
+  }
+
+  function onTouchStart(e){
+    if(refreshing || anyModalOpen() || e.touches.length!==1) return;
+    const target = e.target;
+    // on ne capture pas le geste s'il démarre dans un champ de saisie (sélection de texte)
+    if(target.closest('input, select, textarea')) { gesture='ignore'; return; }
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    dx = 0; dy = 0;
+    gesture = null; // déterminé au premier mouvement significatif
+    pullWrap.classList.remove('ptr-settling');
+    pullWrap.classList.add('ptr-dragging');
+  }
+
+  function onTouchMove(e){
+    if(gesture==='ignore' || refreshing || e.touches.length!==1) return;
+    dx = e.touches[0].clientX - startX;
+    dy = e.touches[0].clientY - startY;
+
+    if(gesture===null){
+      if(Math.abs(dx) < 10 && Math.abs(dy) < 10) return; // pas encore assez de mouvement
+      if(Math.abs(dy) > Math.abs(dx) && dy > 0 && window.scrollY <= 0){
+        gesture = 'ptr';
+      } else if(Math.abs(dx) > Math.abs(dy)){
+        gesture = 'swipe';
+      } else {
+        gesture = 'ignore';
+        return;
+      }
+    }
+
+    if(gesture==='ptr'){
+      e.preventDefault(); // empêche le rebond natif de la page pendant le tirage
+      const pull = Math.min(dy*0.42, PTR_MAX);
+      pullWrap.style.transform = `translateY(${pull}px)`;
+      ptrIndicator.style.opacity = Math.min(pull/PTR_THRESHOLD, 1);
+      const ready = pull >= PTR_THRESHOLD;
+      ptrIndicator.classList.toggle('ready', ready);
+      ptrLabel.textContent = ready ? 'Relâche pour actualiser' : 'Tire pour actualiser';
+    }
+  }
+
+  async function doRefresh(){
+    refreshing = true;
+    ptrIndicator.classList.remove('ready');
+    ptrIndicator.classList.add('loading');
+    ptrLabel.textContent = 'Actualisation...';
+    pullWrap.classList.add('ptr-settling');
+    pullWrap.style.transform = `translateY(${PTR_THRESHOLD}px)`;
+    try{
+      await loadAll(); // recharge tout depuis le stockage
+      render();
+    } finally {
+      ptrIndicator.classList.remove('loading');
+      ptrIndicator.style.opacity = 0;
+      pullWrap.style.transform = 'translateY(0)';
+      showToast('Actualisé');
+      refreshing = false;
+    }
+  }
+
+  function onTouchEnd(){
+    if(gesture==='ptr'){
+      pullWrap.classList.add('ptr-settling');
+      const pull = Math.min(Math.max(dy*0.42,0), PTR_MAX);
+      if(pull >= PTR_THRESHOLD){
+        doRefresh();
+      } else {
+        ptrIndicator.style.opacity = 0;
+        ptrIndicator.classList.remove('ready');
+        pullWrap.style.transform = 'translateY(0)';
+      }
+    } else if(gesture==='swipe'){
+      if(Math.abs(dx) >= SWIPE_THRESHOLD){
+        const idx = TAB_ORDER.indexOf(currentTab);
+        // glisser vers la droite (dx>0) : onglet précédent. Glisser vers la gauche : onglet suivant.
+        const nextIdx = dx > 0 ? idx-1 : idx+1;
+        if(nextIdx>=0 && nextIdx<TAB_ORDER.length){
+          switchTab(TAB_ORDER[nextIdx]);
+        }
+      }
+    }
+    pullWrap.classList.remove('ptr-dragging');
+    gesture = null; dx=0; dy=0;
+  }
+
+  pullWrap.addEventListener('touchstart', onTouchStart, {passive:true});
+  pullWrap.addEventListener('touchmove', onTouchMove, {passive:false});
+  pullWrap.addEventListener('touchend', onTouchEnd, {passive:true});
+  pullWrap.addEventListener('touchcancel', onTouchEnd, {passive:true});
+})();
+
 
 /* ---------- add bar ---------- */
 $('addBarBtn').addEventListener('click', ()=>{
@@ -1014,13 +1131,22 @@ function deleteProductFromModal(){
 }
 
 async function lookupBarcode(){
-  const code = $('barcodeInput').value.trim();
+  // on retire tout ce qui n'est pas un chiffre : espaces, tirets copiés-collés, etc.
+  const code = $('barcodeInput').value.replace(/\D/g, '');
   const status = $('offStatus');
   if(!code){ status.textContent='Entre un code-barres.'; status.className='off-status err'; return; }
+  $('barcodeInput').value = code;
   status.textContent='Recherche sur Open Food Facts...';
   status.className='off-status loading';
   try{
-    const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json`);
+    const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json`, {
+      headers: { 'Accept': 'application/json' }
+    });
+    if(!res.ok){
+      status.textContent = `Open Food Facts a répondu une erreur (code ${res.status}). Réessaie dans un instant.`;
+      status.className='off-status err';
+      return;
+    }
     const data = await res.json();
     if(data.status!==1 || !data.product){
       status.textContent="Produit introuvable sur Open Food Facts. Remplis les champs manuellement.";
@@ -1037,7 +1163,8 @@ async function lookupBarcode(){
     status.textContent = `Trouvé : ${p.product_name || 'produit'} (${p.brands || 'marque inconnue'})`;
     status.className='off-status ok';
   }catch(e){
-    status.textContent = "Erreur réseau lors de la recherche.";
+    console.error('lookupBarcode error', e);
+    status.textContent = "Erreur réseau lors de la recherche (vérifie ta connexion).";
     status.className='off-status err';
   }
 }
@@ -1048,18 +1175,36 @@ let html5QrcodeScanner = null;
 let html5QrcodeLibPromise = null;
 
 // La librairie (assez lourde) n'est chargée qu'au premier scan, pas au démarrage de l'app.
+// Version figée (au lieu de la "latest" d'unpkg) pour ne pas casser le scan si une
+// nouvelle version de la lib change son API.
 function loadHtml5QrcodeLib(){
   if(window.Html5Qrcode) return Promise.resolve();
   if(html5QrcodeLibPromise) return html5QrcodeLibPromise;
   html5QrcodeLibPromise = new Promise((resolve, reject)=>{
     const script = document.createElement('script');
-    script.src = 'https://unpkg.com/html5-qrcode/minified/html5-qrcode.min.js';
+    script.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
     script.onload = ()=>resolve();
     script.onerror = ()=>{ html5QrcodeLibPromise = null; reject(new Error('lib load failed')); };
     document.head.appendChild(script);
   });
   return html5QrcodeLibPromise;
 }
+
+// Laisse le temps au navigateur de terminer la mise en page de la modale
+// (display:none -> flex) avant de mesurer/démarrer la caméra dans #qrReader :
+// sans ça, sur certains mobiles, le conteneur est encore mesuré à 0x0 et le
+// scanner démarre avec une taille de vidéo nulle, donc rien ne se lit jamais.
+function nextFrame(){
+  return new Promise(resolve => requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+}
+
+const barcodeFormats = ()=>[
+  Html5QrcodeSupportedFormats.EAN_13,
+  Html5QrcodeSupportedFormats.EAN_8,
+  Html5QrcodeSupportedFormats.UPC_A,
+  Html5QrcodeSupportedFormats.UPC_E,
+  Html5QrcodeSupportedFormats.CODE_128
+];
 
 async function openBarcodeScanner(){
   const status = $('scannerStatus');
@@ -1068,29 +1213,39 @@ async function openBarcodeScanner(){
   openModal('modalScanner');
   try{
     await loadHtml5QrcodeLib();
+    await nextFrame();
     status.textContent = '';
     status.className = 'off-status';
     if(!html5QrcodeScanner){
       html5QrcodeScanner = new Html5Qrcode('qrReader');
     }
-    await html5QrcodeScanner.start(
-      { facingMode: 'environment' },
-      {
-        fps: 10,
-        qrbox: { width: 260, height: 140 },
-        formatsToSupport: [
-          Html5QrcodeSupportedFormats.EAN_13,
-          Html5QrcodeSupportedFormats.EAN_8,
-          Html5QrcodeSupportedFormats.UPC_A,
-          Html5QrcodeSupportedFormats.UPC_E,
-          Html5QrcodeSupportedFormats.CODE_128
-        ]
-      },
-      (decodedText)=>onBarcodeScanned(decodedText),
-      ()=>{} // échecs de lecture image par image : on ignore, c'est normal
-    );
+    const scanConfig = { fps: 10, qrbox: { width: 260, height: 140 }, formatsToSupport: barcodeFormats() };
+    try{
+      // 1er essai : caméra arrière via facingMode (fonctionne sur la grande majorité des tel).
+      await html5QrcodeScanner.start(
+        { facingMode: { exact: 'environment' } },
+        scanConfig,
+        (decodedText)=>onBarcodeScanned(decodedText),
+        ()=>{} // échecs de lecture image par image : on ignore, c'est normal
+      );
+    }catch(firstErr){
+      // Repli : certains appareils (surtout desktop, ou vieux Android) n'ont pas
+      // de caméra qui matche exactement "environment". On liste les caméras
+      // disponibles et on prend la dernière (souvent la caméra arrière).
+      const cameras = await Html5Qrcode.getCameras();
+      if(!cameras || !cameras.length) throw firstErr;
+      const cam = cameras.find(c=>/back|arri|rear|environment/i.test(c.label)) || cameras[cameras.length-1];
+      await html5QrcodeScanner.start(
+        cam.id,
+        scanConfig,
+        (decodedText)=>onBarcodeScanned(decodedText),
+        ()=>{}
+      );
+    }
   }catch(e){
-    status.textContent = "Impossible d'accéder à la caméra (autorisation refusée ou non disponible). Tu peux entrer le code-barres à la main.";
+    console.error('openBarcodeScanner error', e);
+    const detail = (e && (e.message || e.name)) ? ` (${e.message || e.name})` : '';
+    status.textContent = `Impossible d'accéder à la caméra${detail}. Tu peux entrer le code-barres à la main.`;
     status.className = 'off-status err';
   }
 }
