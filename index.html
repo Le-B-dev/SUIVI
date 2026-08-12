@@ -1557,13 +1557,44 @@ let nativeActive = false;
 // Auparavant la contrainte était en "ideal" (simple préférence, que le
 // navigateur pouvait ignorer et retomber sur la caméra avant/par défaut) —
 // on part maintenant en "exact" comme premier essai, avec ce vrai repli.
+// Choisit explicitement le deviceId de la caméra arrière, au lieu de faire
+// confiance à la contrainte facingMode : sur certains téléphones/navigateurs,
+// facingMode:'environment' est mal interprété et donne quand même la caméra
+// selfie. En listant nous-mêmes les caméras par leur nom, on ne dépend plus de
+// cette interprétation et on choisit nous-mêmes la bonne.
+// Retourne un deviceId (string) si une caméra arrière a pu être identifiée,
+// sinon null (l'appelant retombera alors sur la contrainte facingMode classique).
+async function findBackCameraDeviceId(){
+  let devices = await navigator.mediaDevices.enumerateDevices();
+  let cams = devices.filter(d=>d.kind==='videoinput');
+  // Les noms de caméra ne sont fournis par le navigateur qu'une fois la permission
+  // caméra déjà accordée : si on ne les a pas encore, on demande d'abord une caméra
+  // quelconque (déclenche la demande de permission), puis on ré-énumère avec les
+  // vrais noms, et on referme ce flux temporaire aussitôt.
+  if(cams.length && cams.every(c=>!c.label)){
+    try{
+      const tmp = await navigator.mediaDevices.getUserMedia({ video:true });
+      tmp.getTracks().forEach(t=>t.stop());
+      devices = await navigator.mediaDevices.enumerateDevices();
+      cams = devices.filter(d=>d.kind==='videoinput');
+    }catch(e){ return null; }
+  }
+  if(cams.length<2) return null; // un seul objectif (desktop/webcam) : rien à choisir
+  const back = cams.find(c=>/back|arri[eè]re|rear|environment/i.test(c.label))
+            || cams.find(c=>!/front|avant|selfie|user|face/i.test(c.label));
+  return back ? back.deviceId : null;
+}
+
 async function getEnvironmentCameraStream(){
+  const backId = await findBackCameraDeviceId();
   const videoConstraints = (deviceId)=> deviceId
     ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
     : { facingMode: { exact: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } };
   try{
-    return await navigator.mediaDevices.getUserMedia({ video: videoConstraints() });
+    return await navigator.mediaDevices.getUserMedia({ video: videoConstraints(backId) });
   }catch(firstErr){
+    // dernier repli si le deviceId identifié échoue malgré tout (appareil débranché
+    // entre-temps, etc.) : on retente en listant les caméras une seconde fois.
     const devices = await navigator.mediaDevices.enumerateDevices();
     const cams = devices.filter(d=>d.kind==='videoinput');
     if(!cams.length) throw firstErr;
@@ -1673,13 +1704,20 @@ async function startFallbackScanner(){
     videoConstraints: { focusMode: 'continuous' }
   };
   try{
-    // 1er essai : caméra arrière via facingMode (fonctionne sur la grande majorité des tel).
-    await html5QrcodeScanner.start(
-      { facingMode: { exact: 'environment' } },
-      scanConfig,
-      (decodedText)=>onBarcodeScanned(decodedText),
-      ()=>{} // échecs de lecture image par image : on ignore, c'est normal
-    );
+    // On tente d'abord la caméra arrière identifiée explicitement par son nom
+    // (voir findBackCameraDeviceId) — plus fiable que facingMode seul, qui peut
+    // être mal interprété par certains téléphones et donner la caméra selfie.
+    const backId = await findBackCameraDeviceId();
+    if(backId){
+      await html5QrcodeScanner.start(backId, scanConfig, (decodedText)=>onBarcodeScanned(decodedText), ()=>{});
+    } else {
+      await html5QrcodeScanner.start(
+        { facingMode: { exact: 'environment' } },
+        scanConfig,
+        (decodedText)=>onBarcodeScanned(decodedText),
+        ()=>{} // échecs de lecture image par image : on ignore, c'est normal
+      );
+    }
   }catch(firstErr){
     // Repli : certains appareils (surtout desktop, ou vieux Android) n'ont pas
     // de caméra qui matche exactement "environment". On liste les caméras
