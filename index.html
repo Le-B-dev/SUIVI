@@ -1510,26 +1510,19 @@ async function lookupBarcodeInLog(){
   }
 }
 
-/* ---------- scanner code-barres (caméra en direct) — perf maximale ----------
-   Deux chemins, du plus rapide au plus compatible :
+/* ---------- scanner code-barres (caméra en direct) ----------
+   Implémentation volontairement simple et éprouvée : uniquement la librairie
+   html5-qrcode, avec sa propre gestion de caméra (start/stop/repli), sans
+   code caméra "maison" par-dessus. Les tentatives précédentes de piloter la
+   caméra directement (API BarcodeDetector native, sélection manuelle du
+   deviceId, vérification+correction après coup) ont fini par casser le scan
+   sur certains téléphones — trop de manipulations bas niveau de la caméra,
+   pas assez fiables d'un appareil à l'autre. Cette version reste rapide
+   grâce à des réglages sûrs (formats restreints, fps élevé, zone de scan
+   resserrée) sans toucher à la gestion caméra elle-même. */
 
-   1) CHEMIN NATIF (utilisé dès que le navigateur l'expose — Chrome/Android
-      essentiellement) : on pilote nous-mêmes le flux caméra (getUserMedia) et
-      on appelle l'API native BarcodeDetector directement sur chaque frame vidéo,
-      SANS passer par la librairie html5-qrcode. On élimine ainsi toute la
-      couche JS de la lib (son propre polling à fps fixe, ses conversions
-      canvas) : le décodage tourne à la vitesse du système d'exploitation,
-      cadencé par requestVideoFrameCallback (déclenché à chaque frame vidéo
-      réellement affichée, donc plus réactif qu'un minuteur à fps fixe).
-
-   2) REPLI (Safari/iOS notamment, où BarcodeDetector n'existe pas encore) :
-      html5-qrcode comme avant, mais poussé au maximum (fps élevé, zone de
-      scan resserrée, formats restreints).
-
-   Dans les deux cas, on ne cherche que des codes NUMÉRIQUES (EAN-13/EAN-8/
-   UPC-A/UPC-E) : ce sont les seuls formats utilisés par les codes-barres
-   produits (Open Food Facts), donc pas besoin de tester CODE_128 ou QR_CODE
-   à chaque frame — moins de formats testés = décodage plus rapide. */
+let html5QrcodeScanner = null;
+let html5QrcodeLibPromise = null;
 
 // contexte du scan en cours : 'product' (modale Nouvel aliment) ou 'log' (Ajouter au journal),
 // pour savoir quel champ remplir et quelle recherche lancer une fois un code détecté.
@@ -1539,128 +1532,9 @@ let scanContext = 'product';
 // pendant le court délai où on affiche le message "code détecté"
 let scanLocked = false;
 
-function supportsNativeBarcodeDetector(){
-  return typeof window.BarcodeDetector !== 'undefined';
-}
-
-/* --- chemin natif --- */
-let nativeVideoEl = null;
-let nativeStream = null;
-let nativeDetector = null;
-let nativeRafId = null;
-let nativeActive = false;
-
-// Demande explicitement la caméra arrière, avec repli si le navigateur ne
-// sait pas répondre à "environment" directement (surtout desktop/webcam unique,
-// ou certains Android) : dans ce cas on énumère les caméras disponibles et on
-// choisit celle qui ressemble le plus à une caméra arrière par son nom.
-// Auparavant la contrainte était en "ideal" (simple préférence, que le
-// navigateur pouvait ignorer et retomber sur la caméra avant/par défaut) —
-// on part maintenant en "exact" comme premier essai, avec ce vrai repli.
-// Repli par nom de caméra : utilisé UNIQUEMENT si la contrainte matérielle
-// facingMode s'avère insuffisante (voir getEnvironmentCameraStream ci-dessous).
-// Sur certains appareils aux noms de caméra génériques ("Camera 1", "Camera 2"
-// sans mot "avant/arrière"), ce repli par mots-clés peut lui-même se tromper
-// si aucune caméra ne contient l'un de ces mots — d'où l'ordre choisi plus bas :
-// on ne l'utilise qu'en dernier ressort, jamais en premier.
-async function findBackCameraDeviceId(excludeDeviceId){
-  let devices = await navigator.mediaDevices.enumerateDevices();
-  let cams = devices.filter(d=>d.kind==='videoinput');
-  if(cams.length && cams.every(c=>!c.label)){
-    try{
-      const tmp = await navigator.mediaDevices.getUserMedia({ video:true });
-      tmp.getTracks().forEach(t=>t.stop());
-      devices = await navigator.mediaDevices.enumerateDevices();
-      cams = devices.filter(d=>d.kind==='videoinput');
-    }catch(e){ return null; }
-  }
-  if(excludeDeviceId) cams = cams.filter(c=>c.deviceId!==excludeDeviceId);
-  if(!cams.length) return null;
-  const back = cams.find(c=>/back|arri[eè]re|rear|environment/i.test(c.label))
-            || cams.find(c=>!/front|avant|selfie|user|face/i.test(c.label));
-  return back ? back.deviceId : null;
-}
-
-async function getEnvironmentCameraStream(){
-  const videoConstraints = (deviceId)=> deviceId
-    ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
-    : { facingMode: { exact: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } };
-  // On fait confiance à la caractéristique matérielle de la caméra (c'est le
-  // système d'exploitation qui sait laquelle "regarde vers l'extérieur", pas une
-  // devinette sur son nom) : c'est la méthode la plus fiable et la plus stable.
-  // (Une version précédente vérifiait après coup et fermait/rouvrait la caméra
-  // pour "corriger" — mais rouvrir une caméra juste après l'avoir fermée peut
-  // échouer sur beaucoup de téléphones Android le temps que le matériel la
-  // libère, ce qui cassait le scan entièrement. Simplifié pour la fiabilité.)
-  try{
-    return await navigator.mediaDevices.getUserMedia({ video: videoConstraints() });
-  }catch(firstErr){
-    // La contrainte "environment" a été purement et simplement rejetée (aucune
-    // caméra ne matche exactement, arrive sur desktop/vieux Android) : repli
-    // sur la sélection par nom.
-    const backId = await findBackCameraDeviceId();
-    if(!backId) throw firstErr;
-    return await navigator.mediaDevices.getUserMedia({ video: videoConstraints(backId) });
-  }
-}
-
-async function startNativeScanner(){
-  nativeDetector = new BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','upc_e'] });
-  // résolution modérée mais nette : inutile de demander de la 4K (plus lent à
-  // décoder pour rien), 1280x720 est largement suffisant pour lire un EAN.
-  nativeStream = await getEnvironmentCameraStream();
-  const track = nativeStream.getVideoTracks()[0];
-  // Force une mise au point continue plutôt que ponctuelle : sur beaucoup de
-  // téléphones c'est le temps d'autofocus (pas le décodage) qui domine le délai
-  // avant détection. Ignoré silencieusement si le téléphone ne le permet pas.
-  try{ await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); }catch(e){}
-  nativeVideoEl = document.createElement('video');
-  nativeVideoEl.setAttribute('playsinline', '');
-  nativeVideoEl.muted = true;
-  nativeVideoEl.style.cssText = 'width:100%; height:100%; object-fit:cover; display:block;';
-  nativeVideoEl.srcObject = nativeStream;
-  $('qrReader').innerHTML = '';
-  $('qrReader').appendChild(nativeVideoEl);
-  await nativeVideoEl.play();
-  setupTorch(track);
-
-  nativeActive = true;
-  const detectLoop = async ()=>{
-    if(!nativeActive) return;
-    try{
-      const codes = await nativeDetector.detect(nativeVideoEl);
-      if(codes.length){ onBarcodeScanned(codes[0].rawValue); return; }
-    }catch(e){ /* frame ratée (ex: vidéo pas encore prête) : on retente à la suivante */ }
-    if(!nativeActive) return;
-    // requestVideoFrameCallback se déclenche à chaque frame vidéo réellement
-    // décodée par le hardware (jusqu'à ~30-60x/s) : plus réactif et plus
-    // économe qu'un setInterval/fps fixe côté JS.
-    if('requestVideoFrameCallback' in nativeVideoEl){
-      nativeVideoEl.requestVideoFrameCallback(detectLoop);
-    } else {
-      nativeRafId = requestAnimationFrame(detectLoop);
-    }
-  };
-  detectLoop();
-}
-
-function stopNativeScanner(){
-  nativeActive = false;
-  nativeDetector = null;
-  if(nativeRafId) cancelAnimationFrame(nativeRafId);
-  nativeRafId = null;
-  if(nativeStream){ nativeStream.getTracks().forEach(t=>t.stop()); nativeStream = null; }
-  if(nativeVideoEl){ nativeVideoEl.srcObject = null; nativeVideoEl = null; }
-}
-
-/* --- repli html5-qrcode (formats numériques uniquement, réglages poussés au max) --- */
-let html5QrcodeScanner = null;
-let html5QrcodeLibPromise = null;
-let usingFallbackScanner = false;
-
-// La librairie (assez lourde) n'est chargée qu'en repli, jamais si le chemin
-// natif fonctionne. Version figée (au lieu de la "latest" d'unpkg) pour ne pas
-// casser le scan si une nouvelle version de la lib change son API.
+// La librairie (assez lourde) n'est chargée qu'au premier scan, pas au démarrage de l'app.
+// Version figée (au lieu de la "latest" d'unpkg) pour ne pas casser le scan si une
+// nouvelle version de la lib change son API.
 function loadHtml5QrcodeLib(){
   if(window.Html5Qrcode) return Promise.resolve();
   if(html5QrcodeLibPromise) return html5QrcodeLibPromise;
@@ -1682,87 +1556,15 @@ function nextFrame(){
   return new Promise(resolve => requestAnimationFrame(()=>requestAnimationFrame(resolve)));
 }
 
+// Formats reconnus : uniquement les codes-barres numériques utilisés par les
+// produits (Open Food Facts). Ne pas tester QR_CODE/CODE_128 accélère aussi
+// le décodage (moins de formats essayés à chaque frame).
 const barcodeFormats = ()=>[
   Html5QrcodeSupportedFormats.EAN_13,
   Html5QrcodeSupportedFormats.EAN_8,
   Html5QrcodeSupportedFormats.UPC_A,
   Html5QrcodeSupportedFormats.UPC_E
 ];
-
-async function startFallbackScanner(){
-  await loadHtml5QrcodeLib();
-  await nextFrame();
-  if(!html5QrcodeScanner){
-    html5QrcodeScanner = new Html5Qrcode('qrReader', { formatsToSupport: barcodeFormats() });
-  }
-  const scanConfig = {
-    fps: 30,
-    qrbox: { width: 280, height: 100 },
-    disableFlip: true,
-    formatsToSupport: barcodeFormats(),
-    experimentalFeatures: { useBarCodeDetectorIfSupported: true },
-    // même repli, même réflexe : mise au point continue plutôt que ponctuelle.
-    videoConstraints: { focusMode: 'continuous' }
-  };
-  try{
-    // On fait confiance à la caractéristique matérielle de la caméra (facingMode),
-    // pas à une devinette sur son nom : c'est la méthode la plus fiable et la plus
-    // stable. (Une vérification après coup avec fermeture/réouverture immédiate de
-    // la caméra a été retirée : ce cycle stop/redémarrage trop rapide fait échouer
-    // l'accès caméra sur beaucoup de téléphones Android — mieux vaut une caméra qui
-    // marche, même si elle n'est pas la bonne dans de rares cas, que pas de caméra du tout.)
-    await html5QrcodeScanner.start(
-      { facingMode: { exact: 'environment' } },
-      scanConfig,
-      (decodedText)=>onBarcodeScanned(decodedText),
-      ()=>{} // échecs de lecture image par image : on ignore, c'est normal
-    );
-  }catch(firstErr){
-    // Repli : certains appareils (surtout desktop, ou vieux Android) n'ont pas
-    // de caméra qui matche exactement "environment". On liste les caméras
-    // disponibles et on prend la dernière (souvent la caméra arrière).
-    const cameras = await Html5Qrcode.getCameras();
-    if(!cameras || !cameras.length) throw firstErr;
-    const cam = cameras.find(c=>/back|arri|rear|environment/i.test(c.label)) || cameras[cameras.length-1];
-    await html5QrcodeScanner.start(cam.id, scanConfig, (decodedText)=>onBarcodeScanned(decodedText), ()=>{});
-  }
-  try{
-    const caps = html5QrcodeScanner.getRunningTrackCapabilities && html5QrcodeScanner.getRunningTrackCapabilities();
-    setupTorch(null, caps);
-  }catch(e){}
-}
-
-/* --- lampe torche : basse lumière = mise au point plus lente ET code moins
-   contrasté, donc souvent le plus gros gain de vitesse "réel" perçu par
-   l'utilisateur. Affichée seulement quand le téléphone la supporte réellement
-   (indisponible via le web sur la plupart des iPhone, entre autres). --- */
-let torchTrack = null;
-let torchOn = false;
-
-function setupTorch(track, fallbackCaps){
-  torchTrack = track || null;
-  torchOn = false;
-  const supported = track
-    ? !!(track.getCapabilities && track.getCapabilities().torch)
-    : !!(fallbackCaps && fallbackCaps.torch);
-  const btn = $('torchBtn');
-  btn.style.display = supported ? 'flex' : 'none';
-  btn.classList.remove('active');
-}
-
-async function toggleTorch(){
-  torchOn = !torchOn;
-  $('torchBtn').classList.toggle('active', torchOn);
-  try{
-    if(!usingFallbackScanner && torchTrack){
-      await torchTrack.applyConstraints({ advanced: [{ torch: torchOn }] });
-    } else if(usingFallbackScanner && html5QrcodeScanner && html5QrcodeScanner.applyVideoConstraints){
-      await html5QrcodeScanner.applyVideoConstraints({ advanced: [{ torch: torchOn }] });
-    }
-  }catch(e){
-    console.error('toggleTorch error', e);
-  }
-}
 
 async function openBarcodeScanner(context){
   scanContext = context || 'product';
@@ -1773,24 +1575,44 @@ async function openBarcodeScanner(context){
   $('qrReader').classList.remove('scan-flash');
   $('torchBtn').style.display = 'none';
   openModal('modalScanner');
-
-  if(supportsNativeBarcodeDetector()){
-    try{
-      usingFallbackScanner = false;
-      await startNativeScanner();
-      status.textContent = 'Vise le code-barres avec la caméra...';
-      status.className = 'off-status';
-      return;
-    }catch(e){
-      console.error('native scanner failed, repli sur html5-qrcode', e);
-      stopNativeScanner();
-    }
-  }
   try{
-    usingFallbackScanner = true;
-    await startFallbackScanner();
+    await loadHtml5QrcodeLib();
+    await nextFrame();
+    if(!html5QrcodeScanner){
+      html5QrcodeScanner = new Html5Qrcode('qrReader', { formatsToSupport: barcodeFormats() });
+    }
+    const scanConfig = {
+      fps: 20,
+      qrbox: { width: 280, height: 110 },
+      disableFlip: true,
+      formatsToSupport: barcodeFormats(),
+      // mise au point continue plutôt que ponctuelle, quand le téléphone le permet :
+      // c'est souvent l'autofocus (pas le décodage) qui domine le délai de détection.
+      videoConstraints: { focusMode: 'continuous' }
+    };
+    try{
+      // 1er essai : caméra arrière via facingMode (fonctionne sur la grande majorité des tel).
+      await html5QrcodeScanner.start(
+        { facingMode: { exact: 'environment' } },
+        scanConfig,
+        (decodedText)=>onBarcodeScanned(decodedText),
+        ()=>{} // échecs de lecture image par image : on ignore, c'est normal
+      );
+    }catch(firstErr){
+      // Repli : certains appareils (surtout desktop, ou vieux Android) n'ont pas
+      // de caméra qui matche exactement "environment". On liste les caméras
+      // disponibles et on prend la dernière (souvent la caméra arrière).
+      const cameras = await Html5Qrcode.getCameras();
+      if(!cameras || !cameras.length) throw firstErr;
+      const cam = cameras.find(c=>/back|arri|rear|environment/i.test(c.label)) || cameras[cameras.length-1];
+      await html5QrcodeScanner.start(cam.id, scanConfig, (decodedText)=>onBarcodeScanned(decodedText), ()=>{});
+    }
     status.textContent = 'Vise le code-barres avec la caméra...';
     status.className = 'off-status';
+    try{
+      const caps = html5QrcodeScanner.getRunningTrackCapabilities && html5QrcodeScanner.getRunningTrackCapabilities();
+      setupTorch(caps);
+    }catch(e){}
   }catch(e){
     console.error('openBarcodeScanner error', e);
     const detail = (e && (e.message || e.name)) ? ` (${e.message || e.name})` : '';
@@ -1800,14 +1622,9 @@ async function openBarcodeScanner(context){
 }
 
 async function stopBarcodeScanner(){
-  if(usingFallbackScanner){
-    if(html5QrcodeScanner && html5QrcodeScanner.isScanning){
-      try{ await html5QrcodeScanner.stop(); }catch(e){}
-    }
-  } else {
-    stopNativeScanner();
+  if(html5QrcodeScanner && html5QrcodeScanner.isScanning){
+    try{ await html5QrcodeScanner.stop(); }catch(e){}
   }
-  torchTrack = null;
   torchOn = false;
   $('torchBtn').classList.remove('active');
 }
@@ -1820,6 +1637,33 @@ async function closeScanner(){
 $('modalScanner').addEventListener('click', e=>{
   if(e.target.id==='modalScanner') closeScanner();
 });
+
+/* --- lampe torche : gérée entièrement via l'API officielle de la librairie
+   (getRunningTrackCapabilities/applyVideoConstraints), jamais en accédant au
+   flux caméra nous-mêmes — affichée seulement quand le téléphone la supporte
+   réellement (indisponible via le web sur la plupart des iPhone). --- */
+let torchOn = false;
+
+function setupTorch(caps){
+  torchOn = false;
+  const supported = !!(caps && caps.torch);
+  const btn = $('torchBtn');
+  btn.style.display = supported ? 'flex' : 'none';
+  btn.classList.remove('active');
+}
+
+async function toggleTorch(){
+  if(!html5QrcodeScanner) return;
+  torchOn = !torchOn;
+  $('torchBtn').classList.toggle('active', torchOn);
+  try{
+    if(html5QrcodeScanner.applyVideoConstraints){
+      await html5QrcodeScanner.applyVideoConstraints({ advanced: [{ torch: torchOn }] });
+    }
+  }catch(e){
+    console.error('toggleTorch error', e);
+  }
+}
 
 async function onBarcodeScanned(decodedText){
   if(scanLocked) return;
@@ -1844,6 +1688,7 @@ async function onBarcodeScanned(decodedText){
     }
   }, 350);
 }
+
 
 async function saveProduct(){
   const name = $('prodName').value.trim();
