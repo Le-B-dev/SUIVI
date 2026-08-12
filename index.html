@@ -1550,13 +1550,33 @@ let nativeDetector = null;
 let nativeRafId = null;
 let nativeActive = false;
 
+// Demande explicitement la caméra arrière, avec repli si le navigateur ne
+// sait pas répondre à "environment" directement (surtout desktop/webcam unique,
+// ou certains Android) : dans ce cas on énumère les caméras disponibles et on
+// choisit celle qui ressemble le plus à une caméra arrière par son nom.
+// Auparavant la contrainte était en "ideal" (simple préférence, que le
+// navigateur pouvait ignorer et retomber sur la caméra avant/par défaut) —
+// on part maintenant en "exact" comme premier essai, avec ce vrai repli.
+async function getEnvironmentCameraStream(){
+  const videoConstraints = (deviceId)=> deviceId
+    ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+    : { facingMode: { exact: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } };
+  try{
+    return await navigator.mediaDevices.getUserMedia({ video: videoConstraints() });
+  }catch(firstErr){
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const cams = devices.filter(d=>d.kind==='videoinput');
+    if(!cams.length) throw firstErr;
+    const back = cams.find(c=>/back|arri|rear|environment/i.test(c.label)) || cams[cams.length-1];
+    return await navigator.mediaDevices.getUserMedia({ video: videoConstraints(back.deviceId) });
+  }
+}
+
 async function startNativeScanner(){
   nativeDetector = new BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','upc_e'] });
   // résolution modérée mais nette : inutile de demander de la 4K (plus lent à
   // décoder pour rien), 1280x720 est largement suffisant pour lire un EAN.
-  nativeStream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
-  });
+  nativeStream = await getEnvironmentCameraStream();
   const track = nativeStream.getVideoTracks()[0];
   // Force une mise au point continue plutôt que ponctuelle : sur beaucoup de
   // téléphones c'est le temps d'autofocus (pas le décodage) qui domine le délai
