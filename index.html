@@ -224,6 +224,7 @@
   .off-status.loading{color:var(--text-dim);}
   #qrReader{transition:box-shadow .15s ease;}
   #qrReader.scan-flash{box-shadow:0 0 0 3px var(--prot) inset;}
+  #torchBtn.active{background:var(--prot); color:#0B0D10; border-color:var(--prot);}
 
   /* weight */
   .weight-chart{background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:14px; margin-bottom:12px;}
@@ -593,7 +594,19 @@
   <div class="modal">
     <button class="modal-close" onclick="closeScanner()">×</button>
     <h2>Scanner un code-barres</h2>
-    <div id="qrReader" style="width:100%; border-radius:12px; overflow:hidden; background:#000;"></div>
+    <div style="position:relative; border-radius:12px; overflow:hidden;">
+      <div id="qrReader" style="width:100%; background:#000;"></div>
+      <!-- Cadre de visée purement visuel : aide à cadrer/tenir le téléphone stable
+           pile sur la zone scannée par le détecteur, ce qui réduit largement le temps
+           réel avant détection (bien plus que l'algorithme lui-même). -->
+      <div id="scanGuide" style="position:absolute; inset:0; pointer-events:none; display:flex; align-items:center; justify-content:center;">
+        <div style="width:78%; max-width:280px; height:34%; max-height:100px; border:2px solid var(--prot); border-radius:10px; box-shadow:0 0 0 2000px rgba(0,0,0,.35);"></div>
+      </div>
+      <button id="torchBtn" onclick="toggleTorch()" title="Activer/désactiver la lampe torche"
+        style="display:none; position:absolute; top:10px; right:10px; width:36px; height:36px; border-radius:50%;
+               background:rgba(21,24,29,.85); border:1px solid var(--border); color:var(--text);
+               font-size:16px; align-items:center; justify-content:center; cursor:pointer;">💡</button>
+    </div>
     <div class="off-status" id="scannerStatus" style="margin-top:10px;"></div>
   </div>
 </div>
@@ -1089,15 +1102,49 @@ $('addBarBtn').addEventListener('click', ()=>{
 // état initial (l'onglet actif par défaut au chargement est "journal")
 document.body.classList.add('has-addbar');
 
-function openModal(id){ $(id).classList.add('active'); }
-function closeModal(id){ $(id).classList.remove('active'); }
+// Empêche tout scroll/swipe de la page derrière une modale pendant qu'elle est
+// ouverte (sinon, sur mobile, on pouvait faire défiler le Journal/Repas en
+// arrière-plan à travers le fond assombri pendant qu'une modale était affichée).
+// Compteur (pas un simple booléen) car des modales peuvent s'empiler — ex. la
+// confirmation de suppression s'ouvre par-dessus la modale "Modifier l'aliment"
+// sans la fermer : le scroll ne doit se déverrouiller qu'une fois TOUT fermé.
+let openModalCount = 0;
+let lockedScrollY = 0;
+
+function lockBodyScroll(){
+  lockedScrollY = window.scrollY;
+  document.body.style.position = 'fixed';
+  document.body.style.top = `-${lockedScrollY}px`;
+  document.body.style.left = '0';
+  document.body.style.right = '0';
+}
+function unlockBodyScroll(){
+  document.body.style.position = '';
+  document.body.style.top = '';
+  document.body.style.left = '';
+  document.body.style.right = '';
+  window.scrollTo(0, lockedScrollY);
+}
+
+function openModal(id){
+  $(id).classList.add('active');
+  openModalCount++;
+  if(openModalCount===1) lockBodyScroll();
+}
+function closeModal(id){
+  $(id).classList.remove('active');
+  openModalCount = Math.max(0, openModalCount-1);
+  if(openModalCount===0) unlockBodyScroll();
+}
 document.querySelectorAll('.modal-backdrop').forEach(m=>{
   m.addEventListener('click', e=>{
     if(e.target!==m) return;
     // cas particulier : la modale "Peser" peut avoir été ouverte depuis l'historique,
     // auquel cas on doit y revenir plutôt que de fermer purement et simplement.
     if(m.id==='modalWeight'){ closeWeightModal(); return; }
-    m.classList.remove('active');
+    // toujours passer par closeModal() (jamais classList directement) pour que
+    // le compteur de verrouillage du scroll reste juste.
+    closeModal(m.id);
   });
 });
 
@@ -1510,6 +1557,11 @@ async function startNativeScanner(){
   nativeStream = await navigator.mediaDevices.getUserMedia({
     video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
   });
+  const track = nativeStream.getVideoTracks()[0];
+  // Force une mise au point continue plutôt que ponctuelle : sur beaucoup de
+  // téléphones c'est le temps d'autofocus (pas le décodage) qui domine le délai
+  // avant détection. Ignoré silencieusement si le téléphone ne le permet pas.
+  try{ await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); }catch(e){}
   nativeVideoEl = document.createElement('video');
   nativeVideoEl.setAttribute('playsinline', '');
   nativeVideoEl.muted = true;
@@ -1518,6 +1570,7 @@ async function startNativeScanner(){
   $('qrReader').innerHTML = '';
   $('qrReader').appendChild(nativeVideoEl);
   await nativeVideoEl.play();
+  setupTorch(track);
 
   nativeActive = true;
   const detectLoop = async ()=>{
@@ -1595,7 +1648,9 @@ async function startFallbackScanner(){
     qrbox: { width: 280, height: 100 },
     disableFlip: true,
     formatsToSupport: barcodeFormats(),
-    experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+    experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+    // même repli, même réflexe : mise au point continue plutôt que ponctuelle.
+    videoConstraints: { focusMode: 'continuous' }
   };
   try{
     // 1er essai : caméra arrière via facingMode (fonctionne sur la grande majorité des tel).
@@ -1614,6 +1669,42 @@ async function startFallbackScanner(){
     const cam = cameras.find(c=>/back|arri|rear|environment/i.test(c.label)) || cameras[cameras.length-1];
     await html5QrcodeScanner.start(cam.id, scanConfig, (decodedText)=>onBarcodeScanned(decodedText), ()=>{});
   }
+  try{
+    const caps = html5QrcodeScanner.getRunningTrackCapabilities && html5QrcodeScanner.getRunningTrackCapabilities();
+    setupTorch(null, caps);
+  }catch(e){}
+}
+
+/* --- lampe torche : basse lumière = mise au point plus lente ET code moins
+   contrasté, donc souvent le plus gros gain de vitesse "réel" perçu par
+   l'utilisateur. Affichée seulement quand le téléphone la supporte réellement
+   (indisponible via le web sur la plupart des iPhone, entre autres). --- */
+let torchTrack = null;
+let torchOn = false;
+
+function setupTorch(track, fallbackCaps){
+  torchTrack = track || null;
+  torchOn = false;
+  const supported = track
+    ? !!(track.getCapabilities && track.getCapabilities().torch)
+    : !!(fallbackCaps && fallbackCaps.torch);
+  const btn = $('torchBtn');
+  btn.style.display = supported ? 'flex' : 'none';
+  btn.classList.remove('active');
+}
+
+async function toggleTorch(){
+  torchOn = !torchOn;
+  $('torchBtn').classList.toggle('active', torchOn);
+  try{
+    if(!usingFallbackScanner && torchTrack){
+      await torchTrack.applyConstraints({ advanced: [{ torch: torchOn }] });
+    } else if(usingFallbackScanner && html5QrcodeScanner && html5QrcodeScanner.applyVideoConstraints){
+      await html5QrcodeScanner.applyVideoConstraints({ advanced: [{ torch: torchOn }] });
+    }
+  }catch(e){
+    console.error('toggleTorch error', e);
+  }
 }
 
 async function openBarcodeScanner(context){
@@ -1623,6 +1714,7 @@ async function openBarcodeScanner(context){
   status.textContent = 'Chargement du scanner...';
   status.className = 'off-status loading';
   $('qrReader').classList.remove('scan-flash');
+  $('torchBtn').style.display = 'none';
   openModal('modalScanner');
 
   if(supportsNativeBarcodeDetector()){
@@ -1658,6 +1750,9 @@ async function stopBarcodeScanner(){
   } else {
     stopNativeScanner();
   }
+  torchTrack = null;
+  torchOn = false;
+  $('torchBtn').classList.remove('active');
 }
 
 async function closeScanner(){
