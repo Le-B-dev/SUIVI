@@ -219,6 +219,8 @@
   .off-status.ok{color:var(--prot);}
   .off-status.err{color:var(--danger);}
   .off-status.loading{color:var(--text-dim);}
+  #qrReader{transition:box-shadow .15s ease;}
+  #qrReader.scan-flash{box-shadow:0 0 0 3px var(--prot) inset;}
 
   /* weight */
   .weight-chart{background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:14px; margin-bottom:12px;}
@@ -228,7 +230,7 @@
   .weight-stats-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:6px;}
   .weight-stats-grid.cols-3{grid-template-columns:repeat(3,1fr);}
   .wstat .sub{font-size:10px; color:var(--text-faint); margin-top:2px;}
-  .wstat{flex:1; min-width:0; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:11px;}
+  .wstat{flex:1; min-width:0; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:11px; text-align:center;}
   .wstat .l{font-size:11px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.06em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .wstat .v{font-family:'JetBrains Mono',monospace; font-size:20px; font-weight:600; margin-top:3px;}
   #wCurrent, #wGoalDisplay, #wRemaining, #wLost{white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:baseline; justify-content:center; gap:3px; min-width:0;}
@@ -440,6 +442,15 @@
     <button class="modal-close" onclick="closeModal('modalLog')">×</button>
     <h2>Ajouter un aliment au journal</h2>
     <div class="field">
+      <label>Code-barres</label>
+      <div class="barcode-row">
+        <input type="text" id="logBarcodeInput" inputmode="numeric" placeholder="ex: 3017620422003">
+        <button onclick="lookupBarcodeInLog()">Chercher</button>
+        <button onclick="openBarcodeScanner('log')" title="Scanner avec l'appareil photo">📷</button>
+      </div>
+      <div class="off-status" id="logBarcodeStatus"></div>
+    </div>
+    <div class="field">
       <label>Aliment</label>
       <input type="text" id="logSearch" class="search-bar" placeholder="Chercher un aliment..." style="margin-bottom:10px;">
       <div class="picker-list" id="logProductList"></div>
@@ -454,18 +465,22 @@
   </div>
 </div>
 
-<!-- MODAL: edit log entry quantity -->
+<!-- MODAL: edit log entry (nom + quantité, jamais la date) -->
 <div class="modal-backdrop" id="modalEditLog">
   <div class="modal">
     <button class="modal-close" onclick="closeModal('modalEditLog')">×</button>
     <h2 id="editLogTitle">Modifier</h2>
+    <div class="field">
+      <label>Nom</label>
+      <input type="text" id="editLogName">
+    </div>
     <div class="field">
       <label>Quantité (g)</label>
       <input type="number" id="editLogQty" inputmode="numeric">
     </div>
     <div id="editLogPreview" style="font-size:13px;color:var(--text-dim);margin-bottom:14px;"></div>
     <button class="btn btn-primary" onclick="saveEditLogEntry()">Enregistrer</button>
-    <button class="btn btn-ghost" style="margin-top:10px;" onclick="deleteLogEntry(editLogId); closeModal('modalEditLog');">Supprimer cet aliment</button>
+    <button class="btn btn-ghost" style="margin-top:10px;" onclick="deleteEditingLogEntry()">Supprimer cet aliment</button>
   </div>
 </div>
 
@@ -745,9 +760,12 @@ async function saveSettings(){ await window.storage.set('settings', JSON.stringi
 
 /* ---------- tabs ---------- */
 const TAB_ORDER = ['journal','repas','aliments','profil'];
+const SLIDE_MS = 260; // durée de la transition de glissement entre onglets
 
-async function switchTab(screen){
-  if(screen===currentTab) return;
+// Met à jour l'état de l'app pour un onglet donné (nav active, add-bar, sauvegarde
+// profil, rendu) mais NE touche PAS aux animations : c'est goToTab() qui les gère,
+// pour pouvoir enchaîner state + slide proprement au clic comme au swipe.
+async function applyTabState(screen){
   const leavingProfil = currentTab === 'profil' && screen !== 'profil';
 
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.screen===screen));
@@ -780,8 +798,50 @@ async function switchTab(screen){
   render();
 }
 
+let tabAnimating = false;
+
+// Changement d'onglet avec glissement horizontal fluide (carrousel).
+// direction: 1 = l'onglet cible est "après" (le contenu glisse vers la gauche),
+//           -1 = l'onglet cible est "avant" (glisse vers la droite). Auto-déduit si omis.
+async function goToTab(screen, direction){
+  if(screen===currentTab || tabAnimating) return;
+  if(direction===undefined){
+    direction = TAB_ORDER.indexOf(screen) > TAB_ORDER.indexOf(currentTab) ? 1 : -1;
+  }
+  tabAnimating = true;
+  const oldScreen = $('screen-'+currentTab);
+
+  oldScreen.style.transition = `transform ${SLIDE_MS}ms cubic-bezier(.22,1,.36,1), opacity ${SLIDE_MS}ms ease`;
+  oldScreen.style.transform = `translateX(${direction>0 ? '-24%' : '24%'})`;
+  oldScreen.style.opacity = '0';
+
+  await new Promise(r=>setTimeout(r, SLIDE_MS));
+  oldScreen.style.transition = '';
+  oldScreen.style.transform = '';
+  oldScreen.style.opacity = '';
+
+  await applyTabState(screen);
+
+  const newScreen = $('screen-'+screen);
+  newScreen.style.transition = 'none';
+  newScreen.style.transform = `translateX(${direction>0 ? '24%' : '-24%'})`;
+  newScreen.style.opacity = '0';
+  newScreen.getBoundingClientRect(); // force le reflow avant d'animer l'entrée
+  requestAnimationFrame(()=>{
+    newScreen.style.transition = `transform ${SLIDE_MS}ms cubic-bezier(.22,1,.36,1), opacity ${SLIDE_MS}ms ease`;
+    newScreen.style.transform = 'translateX(0)';
+    newScreen.style.opacity = '1';
+    setTimeout(()=>{
+      newScreen.style.transition = '';
+      newScreen.style.transform = '';
+      newScreen.style.opacity = '';
+      tabAnimating = false;
+    }, SLIDE_MS);
+  });
+}
+
 document.querySelectorAll('.tab-btn').forEach(btn=>{
-  btn.addEventListener('click', ()=>switchTab(btn.dataset.screen));
+  btn.addEventListener('click', ()=>goToTab(btn.dataset.screen));
 });
 
 /* ---------- swipe horizontal (changer d'onglet) + tirer-vers-le-bas (actualiser) ---------- */
@@ -789,31 +849,61 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
   const pullWrap = $('pullWrap');
   const ptrIndicator = $('ptrIndicator');
   const ptrLabel = $('ptrLabel');
-  const PTR_THRESHOLD = 60;   // distance "amortie" à atteindre pour déclencher le refresh
-  const PTR_MAX = 92;         // distance max de tirage (effet élastique)
-  const SWIPE_THRESHOLD = 60; // distance horizontale mini pour changer d'onglet
+  const PTR_THRESHOLD = 60;    // distance "amortie" à atteindre pour déclencher le refresh
+  const PTR_MAX = 92;          // distance max de tirage (effet élastique)
+  const SWIPE_THRESHOLD = 55;  // distance horizontale mini pour changer d'onglet
+  const SWIPE_DRAG_MAX = 110;  // amplitude max du glissement live pendant le drag
 
   let startX=0, startY=0, dx=0, dy=0, gesture=null, refreshing=false;
+  let activeScreenEl=null, rafPending=false;
 
   function anyModalOpen(){
     return !!document.querySelector('.modal-backdrop.active');
   }
 
+  // amortissement "élastique" : progression rapide au début, de plus en plus
+  // de résistance ensuite — beaucoup plus naturel qu'un simple facteur linéaire.
+  function elastic(delta, max){
+    return max * (1 - Math.exp(-Math.abs(delta) / (max*1.6))) * Math.sign(delta);
+  }
+
   function onTouchStart(e){
-    if(refreshing || anyModalOpen() || e.touches.length!==1) return;
+    if(refreshing || tabAnimating || anyModalOpen() || e.touches.length!==1) return;
     const target = e.target;
-    // on ne capture pas le geste s'il démarre dans un champ de saisie (sélection de texte)
-    if(target.closest('input, select, textarea')) { gesture='ignore'; return; }
+    // on ne capture pas le geste s'il démarre dans un champ de saisie, sur la nav
+    // du bas, ou sur un bouton (pour ne jamais gêner un tap normal).
+    if(target.closest('input, select, textarea, .bottom-fixed')) { gesture='ignore'; return; }
     startX = e.touches[0].clientX;
     startY = e.touches[0].clientY;
     dx = 0; dy = 0;
     gesture = null; // déterminé au premier mouvement significatif
+    activeScreenEl = $('screen-'+currentTab);
     pullWrap.classList.remove('ptr-settling');
     pullWrap.classList.add('ptr-dragging');
   }
 
+  function applyMoveVisuals(){
+    rafPending = false;
+    if(gesture==='ptr'){
+      const pull = elastic(Math.max(dy,0), PTR_MAX);
+      pullWrap.style.transform = `translateY(${pull}px)`;
+      ptrIndicator.style.opacity = Math.min(pull/PTR_THRESHOLD, 1);
+      const ready = pull >= PTR_THRESHOLD;
+      ptrIndicator.classList.toggle('ready', ready);
+      ptrLabel.textContent = ready ? 'Relâche pour actualiser' : 'Tire pour actualiser';
+    } else if(gesture==='swipe' && activeScreenEl){
+      const idx = TAB_ORDER.indexOf(currentTab);
+      const atLeftEdge = idx===0 && dx>0;             // pas d'onglet précédent
+      const atRightEdge = idx===TAB_ORDER.length-1 && dx<0; // pas d'onglet suivant
+      const resisted = (atLeftEdge||atRightEdge) ? dx*0.28 : dx;
+      const shift = elastic(resisted, SWIPE_DRAG_MAX);
+      activeScreenEl.style.transform = `translateX(${shift}px)`;
+      activeScreenEl.style.opacity = String(1 - Math.min(Math.abs(shift)/SWIPE_DRAG_MAX, 1)*0.35);
+    }
+  }
+
   function onTouchMove(e){
-    if(gesture==='ignore' || refreshing || e.touches.length!==1) return;
+    if(gesture==='ignore' || refreshing || tabAnimating || e.touches.length!==1) return;
     dx = e.touches[0].clientX - startX;
     dy = e.touches[0].clientY - startY;
 
@@ -821,22 +911,19 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
       if(Math.abs(dx) < 10 && Math.abs(dy) < 10) return; // pas encore assez de mouvement
       if(Math.abs(dy) > Math.abs(dx) && dy > 0 && window.scrollY <= 0){
         gesture = 'ptr';
+        activeScreenEl.style.transition = 'none';
       } else if(Math.abs(dx) > Math.abs(dy)){
         gesture = 'swipe';
+        activeScreenEl.style.transition = 'none';
       } else {
         gesture = 'ignore';
         return;
       }
     }
 
-    if(gesture==='ptr'){
-      e.preventDefault(); // empêche le rebond natif de la page pendant le tirage
-      const pull = Math.min(dy*0.42, PTR_MAX);
-      pullWrap.style.transform = `translateY(${pull}px)`;
-      ptrIndicator.style.opacity = Math.min(pull/PTR_THRESHOLD, 1);
-      const ready = pull >= PTR_THRESHOLD;
-      ptrIndicator.classList.toggle('ready', ready);
-      ptrLabel.textContent = ready ? 'Relâche pour actualiser' : 'Tire pour actualiser';
+    if(gesture==='ptr' || gesture==='swipe'){
+      e.preventDefault(); // empêche le rebond/scroll natif pendant le geste
+      if(!rafPending){ rafPending = true; requestAnimationFrame(applyMoveVisuals); }
     }
   }
 
@@ -859,10 +946,24 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     }
   }
 
+  function springBackScreen(){
+    if(!activeScreenEl) return;
+    activeScreenEl.style.transition = `transform ${SLIDE_MS}ms cubic-bezier(.22,1,.36,1), opacity ${SLIDE_MS}ms ease`;
+    activeScreenEl.style.transform = 'translateX(0)';
+    activeScreenEl.style.opacity = '1';
+    setTimeout(()=>{
+      if(activeScreenEl){
+        activeScreenEl.style.transition = '';
+        activeScreenEl.style.transform = '';
+        activeScreenEl.style.opacity = '';
+      }
+    }, SLIDE_MS);
+  }
+
   function onTouchEnd(){
     if(gesture==='ptr'){
       pullWrap.classList.add('ptr-settling');
-      const pull = Math.min(Math.max(dy*0.42,0), PTR_MAX);
+      const pull = elastic(Math.max(dy,0), PTR_MAX);
       if(pull >= PTR_THRESHOLD){
         doRefresh();
       } else {
@@ -871,23 +972,23 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
         pullWrap.style.transform = 'translateY(0)';
       }
     } else if(gesture==='swipe'){
-      if(Math.abs(dx) >= SWIPE_THRESHOLD){
-        const idx = TAB_ORDER.indexOf(currentTab);
-        // glisser vers la droite (dx>0) : onglet précédent. Glisser vers la gauche : onglet suivant.
-        const nextIdx = dx > 0 ? idx-1 : idx+1;
-        if(nextIdx>=0 && nextIdx<TAB_ORDER.length){
-          switchTab(TAB_ORDER[nextIdx]);
-        }
+      const idx = TAB_ORDER.indexOf(currentTab);
+      // glisser vers la droite (dx>0) : onglet précédent. Glisser vers la gauche : onglet suivant.
+      const nextIdx = dx > 0 ? idx-1 : idx+1;
+      if(Math.abs(dx) >= SWIPE_THRESHOLD && nextIdx>=0 && nextIdx<TAB_ORDER.length){
+        goToTab(TAB_ORDER[nextIdx], dx>0 ? -1 : 1);
+      } else {
+        springBackScreen();
       }
     }
     pullWrap.classList.remove('ptr-dragging');
-    gesture = null; dx=0; dy=0;
+    gesture = null; dx=0; dy=0; activeScreenEl=null;
   }
 
-  pullWrap.addEventListener('touchstart', onTouchStart, {passive:true});
-  pullWrap.addEventListener('touchmove', onTouchMove, {passive:false});
-  pullWrap.addEventListener('touchend', onTouchEnd, {passive:true});
-  pullWrap.addEventListener('touchcancel', onTouchEnd, {passive:true});
+  document.addEventListener('touchstart', onTouchStart, {passive:true});
+  document.addEventListener('touchmove', onTouchMove, {passive:false});
+  document.addEventListener('touchend', onTouchEnd, {passive:true});
+  document.addEventListener('touchcancel', onTouchEnd, {passive:true});
 })();
 
 
@@ -919,6 +1020,9 @@ function openLogModal(presetId){
   $('logSearch').value = '';
   $('logQty').value = '';
   $('logPreview').textContent = '';
+  $('logBarcodeInput').value = '';
+  $('logBarcodeStatus').textContent = '';
+  $('logBarcodeStatus').className = 'off-status';
   renderLogProductList('');
   updateLogPreview();
   openModal('modalLog');
@@ -979,30 +1083,51 @@ async function addLogEntry(){
   render();
 }
 
-async function deleteLogEntry(id){
-  const key = todayKey();
+async function deleteLogEntry(id, dateKey){
+  const key = dateKey || todayKey();
   logs[key] = (logs[key]||[]).filter(e=>e.id!==id);
   await saveLogs();
   render();
 }
 
+// Suppression depuis la modale "Modifier" : referme la modale et, si on éditait
+// un plat d'un jour passé affiché dans le détail (onglet Repas), rafraîchit cette
+// liste aussi.
+async function deleteEditingLogEntry(){
+  const dateKey = editLogDateKey;
+  await deleteLogEntry(editLogId, dateKey);
+  closeModal('modalEditLog');
+  if($('modalDayDetail').classList.contains('active') && dayDetailDate===dateKey){
+    openDayDetail(dateKey);
+  }
+}
+
+// editLogId : id de l'entrée en cours d'édition. editLogDateKey : la date (clé logs[...])
+// à laquelle appartient cette entrée — on la fixe une fois à l'ouverture et on ne la
+// modifie JAMAIS : renommer ou changer la quantité ne déplace pas l'aliment d'un jour
+// à l'autre.
 let editLogId = null;
-function editLogEntry(id){
-  const key = todayKey();
+let editLogDateKey = null;
+
+// dateKey optionnel : permet d'éditer une entrée d'un jour passé (depuis l'onglet
+// Repas) et pas seulement celles d'aujourd'hui (depuis le Journal).
+function editLogEntry(id, dateKey){
+  const key = dateKey || todayKey();
   const e = (logs[key]||[]).find(x=>x.id===id);
   if(!e) return;
   editLogId = id;
-  $('editLogTitle').textContent = e.name;
+  editLogDateKey = key;
+  $('editLogTitle').textContent = key===todayKey() ? 'Modifier' : `Modifier — ${formatDateFr(key)}`;
+  $('editLogName').value = e.name;
   $('editLogQty').value = e.qty;
   updateEditLogPreview();
   openModal('modalEditLog');
-  setTimeout(()=>$('editLogQty').focus(), 200);
+  setTimeout(()=>$('editLogName').focus(), 200);
 }
 $('editLogQty').addEventListener('input', updateEditLogPreview);
 
 function updateEditLogPreview(){
-  const key = todayKey();
-  const e = (logs[key]||[]).find(x=>x.id===editLogId);
+  const e = (logs[editLogDateKey]||[]).find(x=>x.id===editLogId);
   const newQty = parseFloat($('editLogQty').value);
   if(!e || !newQty){ $('editLogPreview').textContent = ''; return; }
   const ratio = newQty / e.qty;
@@ -1011,16 +1136,22 @@ function updateEditLogPreview(){
 }
 
 async function saveEditLogEntry(){
-  const key = todayKey();
-  const e = (logs[key]||[]).find(x=>x.id===editLogId);
+  const e = (logs[editLogDateKey]||[]).find(x=>x.id===editLogId);
+  const newName = $('editLogName').value.trim();
   const newQty = parseFloat($('editLogQty').value);
-  if(!e || !newQty) return;
+  if(!e || !newQty || !newName) return;
   const ratio = newQty / e.qty;
   e.cal *= ratio; e.prot *= ratio; e.lip *= ratio; e.gluc *= ratio;
   e.qty = newQty;
+  e.name = newName; // seul le nom/la quantité changent, jamais la date/le jour de l'entrée
   await saveLogs();
   closeModal('modalEditLog');
-  showToast(`Quantité mise à jour`);
+  showToast(`Aliment mis à jour`);
+  // si on éditait un plat depuis le détail d'un jour passé (onglet Repas), cette
+  // modale reste ouverte derrière : on la rafraîchit pour montrer le nouveau nom.
+  if($('modalDayDetail').classList.contains('active') && dayDetailDate===editLogDateKey){
+    openDayDetail(dayDetailDate);
+  }
   render();
 }
 
@@ -1170,6 +1301,74 @@ async function lookupBarcode(){
 }
 function round1(v){ return v===''||v==null ? '' : Math.round(v*10)/10; }
 
+// Recherche/scan de code-barres directement depuis "Ajouter au journal" :
+// - si un aliment avec ce code-barres est déjà enregistré, on le sélectionne
+//   directement (pas de doublon créé) ;
+// - sinon on va le chercher sur Open Food Facts, on l'enregistre comme nouvel
+//   aliment (pour le retrouver la prochaine fois) puis on le sélectionne.
+async function lookupBarcodeInLog(){
+  const code = $('logBarcodeInput').value.replace(/\D/g, '');
+  const status = $('logBarcodeStatus');
+  if(!code){ status.textContent='Entre un code-barres.'; status.className='off-status err'; return; }
+  $('logBarcodeInput').value = code;
+
+  const existing = products.find(p=>p.barcode===code);
+  if(existing){
+    selectedLogProductId = existing.id;
+    $('logSearch').value = existing.name;
+    renderLogProductList(existing.name);
+    updateLogPreview();
+    status.textContent = `Déjà dans tes aliments : ${existing.name}`;
+    status.className = 'off-status ok';
+    $('logQty').focus();
+    return;
+  }
+
+  status.textContent='Recherche sur Open Food Facts...';
+  status.className='off-status loading';
+  try{
+    const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json`, {
+      headers: { 'Accept': 'application/json' }
+    });
+    if(!res.ok){
+      status.textContent = `Open Food Facts a répondu une erreur (code ${res.status}). Réessaie dans un instant.`;
+      status.className='off-status err';
+      return;
+    }
+    const data = await res.json();
+    if(data.status!==1 || !data.product){
+      status.textContent="Produit introuvable sur Open Food Facts. Tu peux le créer manuellement via \"+ Créer un nouvel aliment\".";
+      status.className='off-status err';
+      return;
+    }
+    const p = data.product;
+    const n = p.nutriments || {};
+    const newP = withNameLower({
+      id: uid(),
+      name: p.product_name || p.generic_name || 'Produit sans nom',
+      cal: round1(n['energy-kcal_100g'] ?? n['energy-kcal'] ?? 0) || 0,
+      prot: round1(n['proteins_100g'] ?? 0) || 0,
+      lip: round1(n['fat_100g'] ?? 0) || 0,
+      gluc: round1(n['carbohydrates_100g'] ?? 0) || 0,
+      barcode: code
+    });
+    products.push(newP);
+    productsById.set(newP.id, newP);
+    await saveProducts();
+    selectedLogProductId = newP.id;
+    $('logSearch').value = newP.name;
+    renderLogProductList(newP.name);
+    updateLogPreview();
+    status.textContent = `Ajouté à tes aliments : ${newP.name}`;
+    status.className = 'off-status ok';
+    $('logQty').focus();
+  }catch(e){
+    console.error('lookupBarcodeInLog error', e);
+    status.textContent = "Erreur réseau lors de la recherche (vérifie ta connexion).";
+    status.className='off-status err';
+  }
+}
+
 /* ---------- scanner code-barres (caméra) ---------- */
 let html5QrcodeScanner = null;
 let html5QrcodeLibPromise = null;
@@ -1206,15 +1405,22 @@ const barcodeFormats = ()=>[
   Html5QrcodeSupportedFormats.CODE_128
 ];
 
-async function openBarcodeScanner(){
+// contexte du scan en cours : 'product' (modale Nouvel aliment) ou 'log' (Ajouter au journal),
+// pour savoir quel champ remplir et quelle recherche lancer une fois un code détecté.
+let scanContext = 'product';
+
+async function openBarcodeScanner(context){
+  scanContext = context || 'product';
   const status = $('scannerStatus');
+  scanLocked = false;
   status.textContent = 'Chargement du scanner...';
   status.className = 'off-status loading';
+  $('qrReader').classList.remove('scan-flash');
   openModal('modalScanner');
   try{
     await loadHtml5QrcodeLib();
     await nextFrame();
-    status.textContent = '';
+    status.textContent = 'Vise le code-barres avec la caméra...';
     status.className = 'off-status';
     if(!html5QrcodeScanner){
       html5QrcodeScanner = new Html5Qrcode('qrReader');
@@ -1257,6 +1463,7 @@ async function stopBarcodeScanner(){
 }
 
 async function closeScanner(){
+  scanLocked = false;
   await stopBarcodeScanner();
   closeModal('modalScanner');
 }
@@ -1264,12 +1471,32 @@ $('modalScanner').addEventListener('click', e=>{
   if(e.target.id==='modalScanner') closeScanner();
 });
 
+// verrou pour éviter que plusieurs frames déclenchent onBarcodeScanned en boucle
+// pendant le court délai où on affiche le message "code détecté"
+let scanLocked = false;
+
 async function onBarcodeScanned(decodedText){
-  await stopBarcodeScanner();
-  closeModal('modalScanner');
-  $('barcodeInput').value = decodedText;
-  showToast(`Code scanné : ${decodedText}`);
-  lookupBarcode();
+  if(scanLocked) return;
+  scanLocked = true;
+  const status = $('scannerStatus');
+  // feedback immédiat : message + flash visuel sur la zone caméra, avant de fermer
+  status.textContent = `✅ Code détecté : ${decodedText}`;
+  status.className = 'off-status ok';
+  $('qrReader').classList.add('scan-flash');
+  if(navigator.vibrate) { try{ navigator.vibrate(80); }catch(e){} }
+  setTimeout(async ()=>{
+    await stopBarcodeScanner();
+    closeModal('modalScanner');
+    $('qrReader').classList.remove('scan-flash');
+    showToast(`Code scanné : ${decodedText}`);
+    if(scanContext==='log'){
+      $('logBarcodeInput').value = decodedText;
+      lookupBarcodeInLog();
+    } else {
+      $('barcodeInput').value = decodedText;
+      lookupBarcode();
+    }
+  }, 450);
 }
 
 async function saveProduct(){
@@ -1412,7 +1639,7 @@ function openDayDetail(date){
   const box = $('dayFoodsList');
   box.innerHTML = entries.map((e,i)=>`
     <div class="log-entry">
-      <div>
+      <div class="log-entry-main" data-idx="${i}">
         <div class="name">${escapeHtml(e.name)}</div>
         <div class="qty">${e.qty}g · ${e.prot.toFixed(1)}g P · ${e.lip.toFixed(1)}g L · ${e.gluc.toFixed(1)}g G</div>
       </div>
@@ -1427,15 +1654,25 @@ function openDayDetail(date){
 // Délégation posée une seule fois (au lieu de re-attacher un listener par aliment
 // à chaque ouverture de la modale détail d'un jour).
 $('dayFoodsList').addEventListener('click', async e=>{
-  const btn = e.target.closest('.add-day-food');
-  if(!btn || !dayDetailDate) return;
-  const entries = logs[dayDetailDate] || [];
-  const entry = entries[parseInt(btn.dataset.idx)];
-  if(!entry) return;
-  pushEntryToToday(entry);
-  await saveLogs();
-  showToast(`${entry.name} ajouté à aujourd'hui`);
-  renderJournal();
+  const addBtn = e.target.closest('.add-day-food');
+  if(addBtn && dayDetailDate){
+    const entries = logs[dayDetailDate] || [];
+    const entry = entries[parseInt(addBtn.dataset.idx)];
+    if(!entry) return;
+    pushEntryToToday(entry);
+    await saveLogs();
+    showToast(`${entry.name} ajouté à aujourd'hui`);
+    renderJournal();
+    return;
+  }
+  // taper sur le nom/la quantité d'un plat ouvre le renommage (jamais la date, qui
+  // reste celle du jour affiché ici — dayDetailDate n'est jamais modifié par ça).
+  const main = e.target.closest('.log-entry-main');
+  if(main && dayDetailDate){
+    const entries = logs[dayDetailDate] || [];
+    const entry = entries[parseInt(main.dataset.idx)];
+    if(entry) editLogEntry(entry.id, dayDetailDate);
+  }
 });
 $('dayAddAllBtn').addEventListener('click', async ()=>{
   if(!dayDetailDate) return;
