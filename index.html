@@ -1,0 +1,1776 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Suivi">
+<meta name="theme-color" content="#0B0D10">
+<title>Suivi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0B0D10;
+    --surface:#15181D;
+    --surface2:#1D2128;
+    --border:#262B33;
+    --text:#F2F4F7;
+    --text-dim:#8B92A0;
+    --text-faint:#565D6B;
+    --cal:#FF8A5C;
+    --prot:#C8FF4D;
+    --lip:#5CC8FF;
+    --gluc:#B98CFF;
+    --danger:#FF5C5C;
+    --radius:16px;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Space Grotesk',-apple-system,BlinkMacSystemFont,sans-serif;
+    min-height:100vh;
+    padding-bottom:88px;
+    -webkit-font-smoothing:antialiased;
+  }
+  body.has-addbar{ padding-bottom:134px; }
+  .mono{font-family:'JetBrains Mono',monospace;}
+  header.top{
+    padding:16px 20px 8px;
+    display:flex; align-items:baseline; justify-content:space-between;
+  }
+  header.top .day{font-size:12px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.08em;}
+  header.top h1{font-size:19px; margin:1px 0 0; font-weight:600;}
+  main{padding:0 20px; max-width:520px; margin:0 auto;}
+  .screen{display:none; animation:fade .25s ease;}
+  .screen.active{display:block;}
+  @keyframes fade{from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:translateY(0);}}
+
+  /* Rings */
+  .rings-card{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:16px 16px;
+    display:flex; flex-direction:column; align-items:center;
+    margin-bottom:12px;
+  }
+  .rings-row{display:flex; align-items:center; gap:16px; width:100%;}
+  .rings-svg{flex-shrink:0;}
+  .ring-legend{flex:1; display:flex; flex-direction:column; gap:7px;}
+  .ring-legend .item{display:flex; align-items:center; justify-content:space-between; font-size:13px;}
+  .ring-legend .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:8px;}
+  .ring-legend .label{color:var(--text-dim); display:flex; align-items:center;}
+  .ring-legend .val{font-family:'JetBrains Mono',monospace; font-weight:600;}
+  .ring-legend .val .goal{color:var(--text-faint); font-weight:400;}
+  .ring-refresh-btn{margin-top:12px; padding:5px 14px;}
+
+  .section-title{
+    font-size:12px; text-transform:uppercase; letter-spacing:.09em; color:var(--text-faint);
+    margin:16px 2px 8px; font-weight:600;
+  }
+
+  /* log entries */
+  .log-entry{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:11px 14px;
+    display:flex; justify-content:space-between; align-items:center;
+    margin-bottom:6px;
+  }
+  .log-entry .name{font-size:14px; font-weight:500;}
+  .log-entry .qty{font-size:12px; color:var(--text-dim); margin-top:2px;}
+  .log-entry .cal{font-family:'JetBrains Mono',monospace; font-size:14px; color:var(--cal);}
+  .log-entry .del{background:none;border:none;color:var(--text-faint);font-size:18px;padding:0 0 0 12px;cursor:pointer;}
+  .log-entry-main{cursor:pointer; flex:1;}
+  .empty{color:var(--text-faint); font-size:13px; padding:18px 4px; text-align:center;}
+
+  /* add bar (remplace l'ancien bouton + flottant) */
+  .bottom-fixed{
+    position:fixed; left:0; right:0; bottom:0; z-index:30;
+    background:rgba(21,24,29,.92); backdrop-filter:blur(16px);
+  }
+  .add-bar{
+    display:none; width:100%; border:none; border-bottom:1px solid var(--border);
+    background:var(--prot); color:#0B0D10;
+    font-family:'Space Grotesk',sans-serif; font-size:14px; font-weight:600;
+    padding:13px 0; cursor:pointer;
+  }
+
+  /* tabs */
+  nav.tabs{
+    border-top:1px solid var(--border);
+    display:flex; padding:6px 8px calc(6px + env(safe-area-inset-bottom));
+  }
+  nav.tabs button{
+    flex:1; background:none; border:none; color:var(--text-faint);
+    font-family:'Space Grotesk',sans-serif; font-size:10px; font-weight:500;
+    display:flex; flex-direction:column; align-items:center; gap:2px;
+    padding:5px 0; cursor:pointer;
+  }
+  nav.tabs button svg{width:20px;height:20px;}
+  nav.tabs button.active{color:var(--prot);}
+
+  /* form / inputs */
+  .field{margin-bottom:11px;}
+  .field label{display:block; font-size:12px; color:var(--text-dim); margin-bottom:5px;}
+  .field input, .field select{
+    width:100%; background:var(--surface2); border:1px solid var(--border);
+    color:var(--text); border-radius:10px; padding:10px 12px; font-size:15px;
+    font-family:'Space Grotesk',sans-serif;
+  }
+  .field input:focus, .field select:focus{outline:none; border-color:var(--prot);}
+  .field input:disabled, .field input:read-only, .btn:disabled{opacity:0.45; cursor:not-allowed;}
+  .row2{display:flex; gap:8px;}
+  .row2 .field{flex:1;}
+  .btn{
+    width:100%; padding:12px; border-radius:12px; border:none;
+    font-size:15px; font-weight:600; cursor:pointer; font-family:'Space Grotesk',sans-serif;
+  }
+  .btn-primary{background:var(--prot); color:#0B0D10;}
+  .btn-secondary{background:var(--surface2); color:var(--text); border:1px solid var(--border);}
+  .btn-ghost{background:none; color:var(--text-dim); border:1px solid var(--border);}
+
+  /* modal */
+  .modal-backdrop{
+    position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:50;
+    display:none; align-items:flex-end; justify-content:center;
+  }
+  .modal-backdrop.active{display:flex;}
+  .modal{
+    background:var(--surface); border-radius:20px 20px 0 0; border:1px solid var(--border); border-bottom:none;
+    width:100%; max-width:520px; padding:16px 20px calc(20px + env(safe-area-inset-bottom));
+    max-height:85vh; overflow-y:auto;
+  }
+  .modal h2{margin:0 0 12px; font-size:17px;}
+  .modal-close{float:right; background:none; border:none; color:var(--text-faint); font-size:22px; cursor:pointer;}
+
+  /* product list */
+  .product-item{
+    background:var(--surface); border:1px solid var(--border); border-radius:12px;
+    padding:11px 14px; margin-bottom:6px; cursor:pointer;
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .product-item .name{font-size:14px; font-weight:500;}
+  .product-item .macros{font-size:11px; color:var(--text-dim); margin-top:3px; font-family:'JetBrains Mono',monospace;}
+  .product-item .chev{color:var(--text-faint);}
+  .search-bar{
+    background:var(--surface2); border:1px solid var(--border); border-radius:12px;
+    padding:10px 12px; width:100%; color:var(--text); font-size:14px; margin-bottom:11px;
+    font-family:'Space Grotesk',sans-serif;
+  }
+  .search-bar:focus{outline:none; border-color:var(--prot);}
+
+  .product-item.selected{border-color:var(--prot); background:rgba(200,255,77,.06);}
+  .picker-list{max-height:200px; overflow-y:auto; margin-bottom:11px;}
+  .picker-list .product-item{margin-bottom:5px;}
+  .count-badge{color:var(--text-faint); font-weight:400; font-size:12px;}
+
+  .segment{display:flex; background:var(--surface2); border:1px solid var(--border); border-radius:12px; padding:4px; margin-bottom:12px;}
+  .segment button{flex:1; background:none; border:none; color:var(--text-dim); font-family:'Space Grotesk',sans-serif; font-size:13px; font-weight:500; padding:8px 0; border-radius:8px; cursor:pointer;}
+  .segment button.active{background:var(--surface); color:var(--text);}
+
+  .day-item{background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:12px 14px; margin-bottom:6px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;}
+  .day-item .date{font-size:14px; font-weight:600; text-transform:capitalize;}
+  .day-item .sub{font-size:12px; color:var(--text-dim); margin-top:3px; font-family:'JetBrains Mono',monospace;}
+  .day-item .chev{color:var(--text-faint); font-size:18px;}
+  .mini-btn{background:none; border:1px solid var(--border); color:var(--prot); border-radius:20px; padding:5px 12px; font-size:11px; font-family:'Space Grotesk',sans-serif; font-weight:600; text-transform:none; letter-spacing:normal; cursor:pointer;}
+
+  .toast{
+    position:fixed; bottom:104px; left:50%; transform:translateX(-50%) translateY(10px);
+    background:var(--surface2); border:1px solid var(--border); color:var(--text);
+    padding:10px 18px; border-radius:30px; font-size:13px; z-index:60;
+    opacity:0; transition:all .25s ease; pointer-events:none; white-space:nowrap;
+  }
+  .toast.show{opacity:1; transform:translateX(-50%) translateY(0);}
+
+  /* barcode */
+  .barcode-row{display:flex; gap:8px;}
+  .barcode-row input{flex:1;}
+  .barcode-row button{
+    background:var(--lip); color:#0B0D10; border:none; border-radius:10px;
+    padding:0 18px; font-weight:600; cursor:pointer; font-family:'Space Grotesk',sans-serif;
+  }
+  .off-status{font-size:12px; margin-top:8px; min-height:16px;}
+  .off-status.ok{color:var(--prot);}
+  .off-status.err{color:var(--danger);}
+  .off-status.loading{color:var(--text-dim);}
+
+  /* weight */
+  .weight-chart{background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:14px; margin-bottom:12px;}
+  .chart-hint{text-align:center; font-size:12px; color:var(--text-faint); margin-top:6px;}
+  .weight-chart:active{opacity:0.85;}
+  .weight-stats{display:flex; gap:10px; margin-bottom:12px;}
+  .weight-stats-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:6px;}
+  .weight-stats-grid.cols-3{grid-template-columns:repeat(3,1fr);}
+  .weight-stats-grid .wstat{padding:8px 6px;}
+  .weight-stats-grid .v{font-size:15px;}
+  .wstat .sub{font-size:10px; color:var(--text-faint); margin-top:2px;}
+  .wstat{flex:1; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:11px;}
+  .wstat .l{font-size:11px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.06em;}
+  .wstat .v{font-family:'JetBrains Mono',monospace; font-size:20px; font-weight:600; margin-top:3px;}
+  #wCurrent, #wGoalDisplay, #wRemaining, #wLost{white-space:nowrap; overflow:hidden; display:flex; align-items:baseline; justify-content:center; gap:3px;}
+  .wstat .v .unit{font-size:0.62em; font-weight:500; color:var(--text-dim);}
+  .weight-row{
+    background:var(--surface); border:1px solid var(--border); border-radius:12px;
+    padding:10px 14px; display:flex; justify-content:space-between; margin-bottom:6px; font-size:14px;
+  }
+  .weight-row .d{color:var(--text-dim);}
+  .weight-row .w{font-family:'JetBrains Mono',monospace; font-weight:600;}
+
+  /* objectifs */
+  .goal-card{background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:14px; margin-bottom:12px;}
+  .goal-card h3{margin:0 0 10px; font-size:14px; color:var(--text-dim); font-weight:500;}
+  .goal-card-compact{padding:11px 12px;}
+  .goal-card-compact h3{margin-bottom:7px;}
+  .goal-card-compact .field{margin-bottom:7px;}
+  .goal-card-compact .field:last-child{margin-bottom:0;}
+  .goal-card-compact .field label{margin-bottom:3px; font-size:11px;}
+  .goal-card-compact .field input, .goal-card-compact .field select{padding:7px 9px; font-size:14px;}
+  .goal-card-compact .row2{gap:7px;}
+  .goal-card-compact .segment{margin-bottom:0;}
+  .goal-card-compact .seg-btn2{padding:7px 6px; font-size:13px;}
+  .activity-grid{display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:8px;}
+  .activity-opt{
+    background:var(--surface2); border:1px solid var(--border); border-radius:10px;
+    padding:8px; text-align:center; cursor:pointer; font-size:12px; color:var(--text-dim);
+  }
+  .activity-opt.sel{border-color:var(--prot); color:var(--prot); background:rgba(200,255,77,.06);}
+  .activity-opt .kcal{display:block; font-family:'JetBrains Mono',monospace; font-size:15px; font-weight:600; color:var(--text); margin-top:2px;}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div>
+    <div class="day" id="todayLabel">—</div>
+    <h1 id="greeting">Salut</h1>
+  </div>
+</header>
+
+<main>
+
+  <!-- JOURNAL -->
+  <section class="screen active" id="screen-journal">
+    <div class="section-title" style="display:flex;justify-content:space-between;align-items:center; margin-top:0;">
+      <span>Poids</span>
+      <button class="mini-btn" onclick="openWeightModal()">+ Pesée</button>
+    </div>
+    <div class="weight-chart" id="weightChartCard" onclick="openWeightHistory()" style="cursor:pointer;">
+      <div id="weightModeBadge" style="font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px; text-align:center;"></div>
+      <div class="weight-stats-grid" id="weightStatsGrid" style="margin-bottom:16px;">
+        <div class="wstat"><div class="l">Actuel</div><div class="v" id="wCurrent">—</div></div>
+        <div class="wstat"><div class="l">Objectif</div><div class="v" id="wGoalDisplay">90 kg</div></div>
+        <div class="wstat" id="wRemainingBox"><div class="l">Restant</div><div class="v" id="wRemaining">—</div></div>
+        <div class="wstat"><div class="l" id="wLostLabel">Tendance</div><div class="v" id="wLost">—</div><div class="sub" id="wLostSince"></div></div>
+      </div>
+      <svg id="weightSvg" width="100%" height="140" viewBox="0 0 480 140" preserveAspectRatio="none"></svg>
+      <div class="chart-hint">Voir l'historique des pesées ›</div>
+    </div>
+
+    <div class="section-title">Aujourd'hui</div>
+    <div class="rings-card">
+      <div class="rings-row">
+        <svg class="rings-svg" width="120" height="120" viewBox="0 0 120 120">
+          <circle cx="60" cy="60" r="52" fill="none" stroke="#1D2128" stroke-width="9"/>
+          <circle id="ringCal" cx="60" cy="60" r="52" fill="none" stroke="var(--cal)" stroke-width="9" stroke-linecap="round" transform="rotate(-90 60 60)"/>
+          <circle cx="60" cy="60" r="40" fill="none" stroke="#1D2128" stroke-width="9"/>
+          <circle id="ringProt" cx="60" cy="60" r="40" fill="none" stroke="var(--prot)" stroke-width="9" stroke-linecap="round" transform="rotate(-90 60 60)"/>
+          <circle cx="60" cy="60" r="28" fill="none" stroke="#1D2128" stroke-width="9"/>
+          <circle id="ringLip" cx="60" cy="60" r="28" fill="none" stroke="var(--lip)" stroke-width="9" stroke-linecap="round" transform="rotate(-90 60 60)"/>
+          <circle cx="60" cy="60" r="16" fill="none" stroke="#1D2128" stroke-width="9"/>
+          <circle id="ringGluc" cx="60" cy="60" r="16" fill="none" stroke="var(--gluc)" stroke-width="9" stroke-linecap="round" transform="rotate(-90 60 60)"/>
+        </svg>
+        <div class="ring-legend">
+          <div class="item"><span class="label"><span class="dot" style="background:var(--cal)"></span>Cal</span><span class="val mono" id="valCal">0 <span class="goal">/2000</span></span></div>
+          <div class="item"><span class="label"><span class="dot" style="background:var(--prot)"></span>Prot</span><span class="val mono" id="valProt">0 <span class="goal">/225g</span></span></div>
+          <div class="item"><span class="label"><span class="dot" style="background:var(--lip)"></span>Lip</span><span class="val mono" id="valLip">0 <span class="goal">/56g</span></span></div>
+          <div class="item"><span class="label"><span class="dot" style="background:var(--gluc)"></span>Gluc</span><span class="val mono" id="valGluc">0 <span class="goal">/150g</span></span></div>
+        </div>
+      </div>
+      <button class="mini-btn ring-refresh-btn" id="refreshJournalBtn">↻ Actualiser</button>
+    </div>
+
+    <div id="todayLog"></div>
+  </section>
+
+  <!-- REPAS (historique) -->
+  <section class="screen" id="screen-repas">
+    <div id="joursList"></div>
+  </section>
+
+  <!-- ALIMENTS -->
+  <section class="screen" id="screen-aliments">
+    <input class="search-bar" id="productSearch" placeholder="Chercher un aliment...">
+    <div id="productList"></div>
+  </section>
+
+  <!-- OBJECTIFS -->
+  <!-- PROFIL -->
+  <section class="screen" id="screen-profil">
+    <div class="goal-card goal-card-compact">
+      <h3>Toi</h3>
+      <div class="row2">
+        <div class="field">
+          <label>Sexe</label>
+          <select id="pSexe"><option value="H">Homme</option><option value="F">Femme</option></select>
+        </div>
+        <div class="field"><label>Âge</label><input type="number" id="pAge" placeholder="ex: 30"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Taille (cm)</label><input type="number" id="pTaille" placeholder="ex: 178"></div>
+        <div class="field"><label>Poids actuel</label><input type="text" id="pPoidsActuel" disabled></div>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label>Tu fais de la musculation ?</label>
+          <select id="pMuscu"><option value="oui">Oui, régulièrement</option><option value="non">Non / peu</option></select>
+        </div>
+        <div class="field">
+          <label>Niveau d'activité général</label>
+          <select id="pActivite">
+            <option>Sédentaire</option>
+            <option>Légèrement actif</option>
+            <option>Modérément actif</option>
+            <option>Très actif</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label>Objectif</label>
+        <div class="segment" style="margin-bottom:0;">
+          <button class="seg-btn2 active" data-objtype="perte">Perte de poids</button>
+          <button class="seg-btn2" data-objtype="maintien">Maintien du poids</button>
+        </div>
+      </div>
+      <div class="field"><label>Poids visé (kg)</label><input type="number" id="pPoidsObjectif" placeholder="ex: 90"></div>
+    </div>
+
+    <div class="goal-card goal-card-compact">
+      <h3>Suggestion de l'app</h3>
+      <div id="profilSuggestion" style="font-size:12px; color:var(--text-dim); line-height:1.5;"></div>
+      <div class="activity-grid" id="suggestionGrid" style="margin-top:10px;"></div>
+      <button class="mini-btn" id="useRecommendedDeficitBtn" style="margin-top:10px; width:100%; padding:8px;"></button>
+      <button class="btn btn-primary" style="margin-top:10px; padding:10px;" onclick="applySuggestion()">Appliquer ces objectifs</button>
+      <div style="display:flex; align-items:center; justify-content:center; gap:6px; margin-top:8px; font-size:11px; color:var(--text-dim); text-align:center;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px; height:12px; flex-shrink:0;"><path d="M12 5v14M6 13l6 6 6-6"/></svg>
+        <span>Tu peux modifier le déficit et les calories ci-dessous</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px; height:12px; flex-shrink:0;"><path d="M12 5v14M6 13l6 6 6-6"/></svg>
+      </div>
+    </div>
+
+    <div class="goal-card goal-card-compact">
+      <h3>Tes cibles journalières</h3>
+      <div class="field" id="deficitField">
+        <label>Déficit visé (kcal/j)</label>
+        <input type="number" id="pDeficit" placeholder="ex: 500">
+        <div id="deficitWeeklyLoss" style="font-size:12px; color:var(--text-dim); margin-top:6px; line-height:1.5;"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Calories</label><input type="number" id="goalCal"></div>
+        <div class="field"><label>Protéines (g)</label><input type="number" id="goalProt" readonly></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Lipides (g)</label><input type="number" id="goalLip" readonly></div>
+        <div class="field"><label>Glucides (g)</label><input type="number" id="goalGluc" readonly></div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div class="bottom-fixed">
+  <button class="add-bar" id="addBarBtn" style="display:block;">+ Ajouter un aliment au journal</button>
+  <nav class="tabs">
+    <button class="tab-btn active" data-screen="journal">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+      Journal
+    </button>
+    <button class="tab-btn" data-screen="repas">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+      Repas
+    </button>
+    <button class="tab-btn" data-screen="aliments">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 3v18M4 3c0 4 4 4 4 8s-4 4-4 8M20 3v18M20 8h-3a2 2 0 0 1 0-4h3z"/></svg>
+      Aliments
+    </button>
+    <button class="tab-btn" data-screen="profil">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c1.5-4 5-6 8-6s6.5 2 8 6"/></svg>
+      Profil
+    </button>
+  </nav>
+</div>
+
+<!-- MODAL: add log entry (choose product + qty) -->
+<div class="modal-backdrop" id="modalLog">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modalLog')">×</button>
+    <h2>Ajouter un aliment au journal</h2>
+    <div class="field">
+      <label>Aliment</label>
+      <input type="text" id="logSearch" class="search-bar" placeholder="Chercher un aliment..." style="margin-bottom:10px;">
+      <div class="picker-list" id="logProductList"></div>
+      <button class="mini-btn" style="width:100%; padding:10px;" onclick="openProductModal(true)">+ Créer un nouvel aliment</button>
+    </div>
+    <div class="field">
+      <label>Quantité (g)</label>
+      <input type="number" id="logQty" placeholder="ex: 150" inputmode="numeric">
+    </div>
+    <div id="logPreview" style="font-size:13px;color:var(--text-dim);margin-bottom:14px;"></div>
+    <button class="btn btn-primary" onclick="addLogEntry()">Ajouter</button>
+  </div>
+</div>
+
+<!-- MODAL: edit log entry quantity -->
+<div class="modal-backdrop" id="modalEditLog">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modalEditLog')">×</button>
+    <h2 id="editLogTitle">Modifier</h2>
+    <div class="field">
+      <label>Quantité (g)</label>
+      <input type="number" id="editLogQty" inputmode="numeric">
+    </div>
+    <div id="editLogPreview" style="font-size:13px;color:var(--text-dim);margin-bottom:14px;"></div>
+    <button class="btn btn-primary" onclick="saveEditLogEntry()">Enregistrer</button>
+    <button class="btn btn-ghost" style="margin-top:10px;" onclick="deleteLogEntry(editLogId); closeModal('modalEditLog');">Supprimer cet aliment</button>
+  </div>
+</div>
+
+<!-- MODAL: add product (manual or barcode) -->
+<div class="modal-backdrop" id="modalProduct">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modalProduct')">×</button>
+    <h2 id="productModalTitle">Nouvel aliment</h2>
+
+    <div class="field">
+      <label>Code-barres (Open Food Facts)</label>
+      <div class="barcode-row">
+        <input type="text" id="barcodeInput" inputmode="numeric" placeholder="ex: 3017620422003">
+        <button onclick="lookupBarcode()">Chercher</button>
+        <button onclick="openBarcodeScanner()" title="Scanner avec l'appareil photo">📷</button>
+      </div>
+      <div class="off-status" id="offStatus"></div>
+    </div>
+
+    <div class="field"><label>Nom</label><input type="text" id="prodName"></div>
+    <div class="row2">
+      <div class="field"><label>Cal /100g</label><input type="number" id="prodCal"></div>
+      <div class="field"><label>Prot /100g</label><input type="number" id="prodProt"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Lip /100g</label><input type="number" id="prodLip"></div>
+      <div class="field"><label>Gluc /100g</label><input type="number" id="prodGluc"></div>
+    </div>
+    <button class="btn btn-primary" id="saveProductBtn" onclick="saveProduct()">Enregistrer l'aliment</button>
+    <button class="btn btn-ghost" id="deleteProductBtn" style="margin-top:10px; display:none;" onclick="deleteProductFromModal()">Supprimer cet aliment</button>
+  </div>
+</div>
+
+<!-- MODAL: add weight -->
+<div class="modal-backdrop" id="modalWeight">
+  <div class="modal">
+    <button class="modal-close" onclick="closeWeightModal()">×</button>
+    <h2 id="weightModalTitle">Peser</h2>
+    <div id="weightModalSub" style="font-size:13px; color:var(--text-dim); margin:-10px 0 16px;"></div>
+    <div class="field"><label>Date</label><input type="date" id="weightDate"></div>
+    <div class="field"><label>Poids (kg)</label><input type="number" step="0.1" id="weightInput"></div>
+    <button class="btn btn-primary" onclick="addWeight()">Enregistrer</button>
+    <button class="btn btn-ghost" id="deleteWeightBtn" style="margin-top:10px; display:none;" onclick="deleteWeightFromModal()">Supprimer cette pesée</button>
+  </div>
+</div>
+
+<!-- MODAL: day detail -->
+<div class="modal-backdrop" id="modalDayDetail">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modalDayDetail')">×</button>
+    <h2 id="dayDetailTitle">Jour</h2>
+    <div class="weight-stats" style="margin-bottom:16px;">
+      <div class="wstat"><div class="l">Cal</div><div class="v mono" id="dayCal">—</div></div>
+      <div class="wstat"><div class="l">Prot</div><div class="v mono" id="dayProt">—</div></div>
+      <div class="wstat"><div class="l">Lip</div><div class="v mono" id="dayLip">—</div></div>
+      <div class="wstat"><div class="l">Gluc</div><div class="v mono" id="dayGluc">—</div></div>
+    </div>
+    <div id="dayFoodsList" style="margin-bottom:14px;"></div>
+    <button class="btn btn-primary" id="dayAddAllBtn">Tout ajouter à aujourd'hui</button>
+  </div>
+</div>
+
+<!-- MODAL: weight history -->
+<div class="modal-backdrop" id="modalWeightHistory">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modalWeightHistory')">×</button>
+    <h2 style="display:flex;justify-content:space-between;align-items:center;">
+      <span>Historique des pesées</span>
+      <button class="mini-btn" style="margin-right:26px;" onclick="openWeightModal(false, true)">+ Pesée</button>
+    </h2>
+    <div id="weightHistoryList"></div>
+  </div>
+</div>
+
+<!-- MODAL: barcode scanner (camera) -->
+<div class="modal-backdrop" id="modalScanner">
+  <div class="modal">
+    <button class="modal-close" onclick="closeScanner()">×</button>
+    <h2>Scanner un code-barres</h2>
+    <div id="qrReader" style="width:100%; border-radius:12px; overflow:hidden; background:#000;"></div>
+    <div class="off-status" id="scannerStatus" style="margin-top:10px;"></div>
+  </div>
+</div>
+
+<!-- MODAL: generic confirmation (delete etc.) -->
+<div class="modal-backdrop" id="modalConfirm">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modalConfirm')">×</button>
+    <h2 id="confirmTitle">Confirmer</h2>
+    <div id="confirmMessage" style="font-size:14px; color:var(--text-dim); margin-bottom:18px;"></div>
+    <button class="btn btn-primary" id="confirmActionBtn" style="background:var(--danger); color:#fff;">Supprimer</button>
+    <button class="btn btn-ghost" style="margin-top:10px;" onclick="closeModal('modalConfirm')">Annuler</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ---------- shim de stockage (remplace window.storage des artifacts Claude) ----------
+   Même interface (get/set async), mais persiste dans le localStorage du navigateur/iPhone
+   au lieu du storage propre à Claude. Aucune autre ligne du fichier n'a besoin de changer. */
+window.storage = {
+  async get(key){
+    if(!(key in localStorage)) throw new Error('key not found: '+key);
+    return { key, value: localStorage.getItem(key) };
+  },
+  async set(key, value){
+    localStorage.setItem(key, value);
+    return { key, value };
+  }
+};
+</script>
+<script>
+/* ---------- DOM cache ----------
+   $(id) remplace document.getElementById(id) partout dans le fichier (155+ appels).
+   Les éléments référencés sont tous statiques (présents dans le HTML dès le chargement),
+   donc on peut les mettre en cache au premier accès et renvoyer la même référence
+   ensuite, au lieu de refaire une recherche DOM à chaque appel (y compris dans des
+   boucles de rendu appelées à chaque ajout/suppression d'aliment). */
+const _domCache = new Map();
+function $(id){
+  let el = _domCache.get(id);
+  if(el === undefined){
+    el = document.getElementById(id);
+    _domCache.set(id, el);
+  }
+  return el;
+}
+
+/* ---------- state ---------- */
+let products = [];
+let logs = {};
+let weights = [];
+
+// Index id->aliment (évite un .find() en O(n) à chaque recherche/édition/suppression
+// d'un aliment, remplacé par un accès Map en O(1)). Reconstruit après chaque
+// chargement/ajout/suppression via reindexProducts().
+let productsById = new Map();
+function reindexProducts(){
+  productsById = new Map(products.map(p=>[p.id, p]));
+}
+// nameLower est calculé une seule fois par aliment (à la création/au chargement)
+// plutôt qu'à chaque frappe dans les barres de recherche (log + aliments), qui
+// filtrent potentiellement toute la liste à chaque keystroke.
+function withNameLower(p){ p.nameLower = p.name.toLowerCase(); return p; }
+const DEFAULT_SETTINGS = {
+  calGoal:2000, protGoal:225, lipGoal:56, glucGoal:150, weightGoal:90,
+  sexe:'H', age:30, taille:178, muscu:'oui', activite:'Modérément actif', deficit:500,
+  objectifType:'perte'
+};
+let settings = Object.assign({}, DEFAULT_SETTINGS);
+let currentTab = 'journal';
+
+// BUG FIX : toISOString() convertit en UTC. La France étant en avance sur UTC
+// (+1h hiver / +2h été), tôt le matin (ex: minuit-2h en été) l'heure UTC est
+// encore la veille -> les pesées/repas tombaient sur le mauvais jour.
+// On construit la clé YYYY-MM-DD à partir des composantes locales de la date.
+const todayKey = () => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+};
+
+const DEFAULT_PRODUCTS = [
+["FOL EPI",287,19,0,0],["POULET DORÉ AU FOUR RANOU",102,20,2,1],
+["WHEY PROTEINE INSHAPE",386,77,5.8,7.8],["OEUF PLEINE FORME FERMIER",140,13,10,0],
+["FILET DE POULET",120,23,0,0],["BOEUF (BROCHETTE)",135,21,0,0],
+["OIGNON",40,1,0,0],["POIVRON",30,0,0,0],["CHAMPIGNONS BRUN DE PARIS",25,3,0,0],
+["POMME DE TERRE",80,1,0,17],["BROCOLI INTERMARCHÉ",20,1,0,0],
+["RIZ BASMATI INTERMARCHÉ BIO",350,7.4,0.6,78],["CUBE MAGGI BIO BOEUF",243,0,0,0],
+["MAIZENA",355,0,0,0],["CARRÉ FRAIS 0%",85,16,0.3,4.5],
+["STEACK 5% LIDL SURGELÉ",133,22,0,0],["PARMESAN INTERMARCHÉ",402,32,30,0],
+["DINDE CARREFOUR",103,22,0,0],["FILET DE SARDINE CIT&BAS SAUPIQUET",144,17,0,0],
+["THON ENTIER NATUREL PETIT NAVIRE",109,25,1,0],["CREVETTE ROSES INTERMARCHÉ",60,12,0.8,0],
+["HUILE D'OLIVE PUGET",900,0,100,0],["COLIN SURGELÉ INTERMARCHÉ",75,17,0.7,0],
+["PAVE CHARAL",115,23,2.3,0.6],["CANCOILLOTTE NATURE",153,15,9.7,1.4],
+["RATATOUILLE CASSEGRAIN",72,1.3,4.1,5.7],["CAROTTE RAPEE BONDUELLE",63,0.7,3.5,6],
+["PIZZA PEPPERONI PAN ENV 740G",281,12,13,27],["SAUCISSES LENTILLES RANOU",99,6.2,4.2,7.9],
+["DINDE DOREE AU FOUR RANOU",104,22,1.3,1],["BETTERAVE BONDUELLE",51,1.5,1,7.5],
+["COLESLAW BONDUELLE",116,1,9,6.5],["CAROTTE RAPÉE MARTINET",79,1,5.2,5.6],
+["CELERI BONDUELLE",138,2,12,4],["MINI CROQUE PICARD",174,9.2,7.5,17],
+["MINI PIZZA PICARD",205,9.3,6.7,26],["MOZZA STICK PICARD",292,10,11,36],
+["BOUCHÉES PICARD",309,12,19,21],["MINI NAAN PICARD",280,8.3,12,35],
+["MINI FEUILLETÉ SAUCISSE PICARD",288,8.9,18,22],["BAGUETTE",270,8.1,1.5,54],
+["RIZ LONG UNCLE B MICRONDE",162,4,0.5,35],["RIZ BASMATI UNCLE B MICRONDE 450 G",141,3.3,1.3,29],
+["JAMBON -25% DE SEL RANOU",113,21,3.1,0.5],["POMME DE TERRE SOUS VIDE",70,1.9,0.5,14],
+["COTTAGE CHEESE DANONE",88,12,3.7,1.6],["BARRE PROT",396,33,9.5,42],
+["RIZ BASMATI UNCLE B MICRONDE 220G",142,3.1,1.6,29],["RIZ BASMATI BIO LIDL",354,6.7,0.4,80.4],
+["JAMBON -25% DE SEL LIDL",100,19,2,1.5],["ST MORET 8%",132,10,8,5],
+["POIS CHICHES LIDL",111,6.7,2.1,12],["PARMESAN LIDL",402,32,30,0]
+];
+
+const DEFAULT_WEIGHTS = [
+["2026-06-15",119.3],["2026-06-16",119.1],["2026-06-17",119.1],["2026-06-18",119],
+["2026-06-19",118.7],["2026-06-20",118.6],["2026-06-21",117.7],["2026-06-22",116.4],
+["2026-06-23",117.4],["2026-06-24",118.2],["2026-06-25",117.7],["2026-06-26",117.2],
+["2026-06-27",116.7],["2026-06-28",116.4],["2026-06-29",116.7],["2026-06-30",116.5],
+["2026-07-01",116.2],["2026-07-02",116.1],["2026-07-03",115.3],["2026-07-04",114.6],
+["2026-07-05",113.1],["2026-07-06",114.4],["2026-07-07",114.4],["2026-07-08",114],
+["2026-07-09",113.7],["2026-07-10",113.4],["2026-07-11",113.5],["2026-07-12",113],
+["2026-07-13",115.4],["2026-07-14",115.3],["2026-07-15",114.7],["2026-07-16",113.8],
+["2026-07-17",113.8],["2026-07-18",113.7],["2026-07-19",113.2],["2026-07-20",112.8],
+["2026-07-21",112.6],["2026-07-22",111.5],["2026-07-23",110.6],["2026-07-24",111.3],
+["2026-07-26",110.3],["2026-07-27",111.7],["2026-07-28",111.3],["2026-07-29",111.2]
+];
+
+function uid(){ return Math.random().toString(36).slice(2,10); }
+
+// Échappe les caractères spéciaux HTML avant insertion via innerHTML. Nécessaire pour
+// tout texte qui n'est pas strictement contrôlé par l'app : le nom d'un aliment peut
+// venir d'une saisie manuelle OU de l'API Open Food Facts (lookupBarcode -> product_name),
+// donc d'une source externe non fiable. Sans ça, un nom du type
+// "<img src=x onerror=...>" créerait un vrai élément HTML/JS exécutable dans la page.
+const _escapeMap = { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' };
+function escapeHtml(str){
+  return String(str).replace(/[&<>"']/g, ch => _escapeMap[ch]);
+}
+
+// Additionne les macros d'une liste d'entrées de journal. Remplace 3 blocs
+// .reduce((a,e)=>({...}), {...}) identiques dispersés dans le fichier (Journal du
+// jour, historique par jour, détail d'un jour) : même logique, un seul endroit à
+// maintenir. Une boucle simple évite aussi de recréer un objet accumulateur à
+// chaque itération, contrairement au .reduce() qui en allouait un nouveau à chaque
+// aliment additionné.
+function sumMacros(entries){
+  const t = {cal:0, prot:0, lip:0, gluc:0};
+  for(const e of entries){
+    t.cal += e.cal; t.prot += e.prot; t.lip += e.lip; t.gluc += e.gluc;
+  }
+  return t;
+}
+
+let toastTimer;
+function showToast(msg){
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>t.classList.remove('show'), 1800);
+}
+
+/* ---------- storage ---------- */
+async function loadAll(){
+  try{
+    const r = await window.storage.get('products');
+    products = JSON.parse(r.value).map(withNameLower);
+  }catch(e){
+    products = DEFAULT_PRODUCTS.map(p=>withNameLower({id:uid(),name:p[0],cal:p[1],prot:p[2],lip:p[3],gluc:p[4],barcode:null}));
+    await window.storage.set('products', JSON.stringify(products));
+  }
+  reindexProducts();
+  try{
+    const r = await window.storage.get('logs');
+    logs = JSON.parse(r.value);
+  }catch(e){ logs = {}; await window.storage.set('logs', JSON.stringify(logs)); }
+  try{
+    const r = await window.storage.get('weights');
+    weights = JSON.parse(r.value);
+  }catch(e){
+    weights = DEFAULT_WEIGHTS.map(w=>({date:w[0], weight:w[1]}));
+    await window.storage.set('weights', JSON.stringify(weights));
+  }
+  try{
+    const r = await window.storage.get('settings');
+    settings = Object.assign({}, DEFAULT_SETTINGS, JSON.parse(r.value));
+  }catch(e){ await window.storage.set('settings', JSON.stringify(settings)); }
+}
+async function saveProducts(){
+  // on ne sauvegarde jamais nameLower : c'est une donnée dérivée recalculée au chargement
+  await window.storage.set('products', JSON.stringify(products.map(({nameLower, ...p})=>p)));
+}
+async function saveLogs(){ await window.storage.set('logs', JSON.stringify(logs)); }
+async function saveWeights(){ await window.storage.set('weights', JSON.stringify(weights)); }
+async function saveSettings(){ await window.storage.set('settings', JSON.stringify(settings)); }
+
+/* ---------- tabs ---------- */
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click', async ()=>{
+    const leavingProfil = currentTab === 'profil' && btn.dataset.screen !== 'profil';
+
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+    currentTab = btn.dataset.screen;
+    $('screen-'+currentTab).classList.add('active');
+    const addBar = $('addBarBtn');
+    if(currentTab==='journal'){
+      addBar.style.display = 'block';
+      addBar.textContent = '+ Ajouter un aliment au journal';
+      document.body.classList.add('has-addbar');
+    } else if(currentTab==='aliments'){
+      addBar.style.display = 'block';
+      addBar.textContent = '+ Ajouter un aliment';
+      document.body.classList.add('has-addbar');
+    } else {
+      addBar.style.display = 'none';
+      document.body.classList.remove('has-addbar');
+    }
+
+    if(leavingProfil){
+      // on quitte l'onglet Profil : on annule le debounce et on enregistre tout de suite,
+      // pour être sûr que le Journal affiche les cibles à jour, même si on change d'onglet vite.
+      clearTimeout(profileAutosaveTimer);
+      clearTimeout(goalsAutosaveTimer);
+      await saveProfileSilently();
+      await saveGoalsSilently();
+    }
+
+    render();
+  });
+});
+
+/* ---------- refresh (rings) ---------- */
+$('refreshJournalBtn').addEventListener('click', async ()=>{
+  const btn = $('refreshJournalBtn');
+  btn.disabled = true;
+  try{
+    await loadAll(); // recharge tout depuis le stockage (utile si modifié ailleurs)
+    render();
+    showToast('Actualisé');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+/* ---------- add bar ---------- */
+$('addBarBtn').addEventListener('click', ()=>{
+  if(currentTab==='journal'){ openLogModal(); }
+  else if(currentTab==='aliments'){ openProductModal(); }
+});
+// état initial (l'onglet actif par défaut au chargement est "journal")
+document.body.classList.add('has-addbar');
+
+function openModal(id){ $(id).classList.add('active'); }
+function closeModal(id){ $(id).classList.remove('active'); }
+document.querySelectorAll('.modal-backdrop').forEach(m=>{
+  m.addEventListener('click', e=>{
+    if(e.target!==m) return;
+    // cas particulier : la modale "Peser" peut avoir été ouverte depuis l'historique,
+    // auquel cas on doit y revenir plutôt que de fermer purement et simplement.
+    if(m.id==='modalWeight'){ closeWeightModal(); return; }
+    m.classList.remove('active');
+  });
+});
+
+/* ---------- journal ---------- */
+let selectedLogProductId = null;
+
+function openLogModal(presetId){
+  selectedLogProductId = presetId || null;
+  $('logSearch').value = '';
+  $('logQty').value = '';
+  $('logPreview').textContent = '';
+  renderLogProductList('');
+  updateLogPreview();
+  openModal('modalLog');
+  if(!presetId) setTimeout(()=>$('logSearch').focus(), 200);
+}
+$('logSearch').addEventListener('input', e=>renderLogProductList(e.target.value));
+$('logQty').addEventListener('input', updateLogPreview);
+
+function renderLogProductList(filterText){
+  const q = (filterText||'').toLowerCase();
+  const matches = products.filter(p=>p.nameLower.includes(q)).slice(0,40);
+  const box = $('logProductList');
+  if(matches.length===0){
+    box.innerHTML = `<div class="empty">Aucun aliment trouvé.</div>`;
+    return;
+  }
+  box.innerHTML = matches.map(p=>`
+    <div class="product-item ${p.id===selectedLogProductId?'selected':''}" data-id="${p.id}">
+      <div style="flex:1;">
+        <div class="name">${escapeHtml(p.name)}</div>
+        <div class="macros">${p.cal} kcal · ${p.prot}g P · ${p.lip}g L · ${p.gluc}g G /100g</div>
+      </div>
+    </div>`).join('');
+}
+// Délégation (posée une seule fois au chargement, pas à chaque rendu) : cette liste
+// se réaffiche à chaque frappe dans la recherche (jusqu'à 40 items), donc recréer
+// 40 listeners+closures par keystroke était le point le plus chaud du fichier.
+$('logProductList').addEventListener('click', e=>{
+  const el = e.target.closest('.product-item');
+  if(!el) return;
+  selectedLogProductId = el.dataset.id;
+  el.parentElement.querySelectorAll('.product-item.selected').forEach(x=>x.classList.remove('selected'));
+  el.classList.add('selected');
+  updateLogPreview();
+  $('logQty').focus();
+});
+
+function updateLogPreview(){
+  const p = productsById.get(selectedLogProductId);
+  const qty = parseFloat($('logQty').value) || 0;
+  if(!p){ $('logPreview').textContent = ''; return; }
+  const f = qty/100;
+  $('logPreview').textContent =
+    `${p.name} — ${Math.round(p.cal*f)} kcal · ${(p.prot*f).toFixed(1)}g prot · ${(p.lip*f).toFixed(1)}g lip · ${(p.gluc*f).toFixed(1)}g gluc`;
+}
+
+async function addLogEntry(){
+  const p = productsById.get(selectedLogProductId);
+  const qty = parseFloat($('logQty').value);
+  if(!p || !qty){ return; }
+  const f = qty/100;
+  const key = todayKey();
+  if(!logs[key]) logs[key] = [];
+  logs[key].push({ id:uid(), name:p.name, qty, cal:p.cal*f, prot:p.prot*f, lip:p.lip*f, gluc:p.gluc*f });
+  await saveLogs();
+  closeModal('modalLog');
+  showToast(`${p.name} ajouté au journal`);
+  render();
+}
+
+async function deleteLogEntry(id){
+  const key = todayKey();
+  logs[key] = (logs[key]||[]).filter(e=>e.id!==id);
+  await saveLogs();
+  render();
+}
+
+let editLogId = null;
+function editLogEntry(id){
+  const key = todayKey();
+  const e = (logs[key]||[]).find(x=>x.id===id);
+  if(!e) return;
+  editLogId = id;
+  $('editLogTitle').textContent = e.name;
+  $('editLogQty').value = e.qty;
+  updateEditLogPreview();
+  openModal('modalEditLog');
+  setTimeout(()=>$('editLogQty').focus(), 200);
+}
+$('editLogQty').addEventListener('input', updateEditLogPreview);
+
+function updateEditLogPreview(){
+  const key = todayKey();
+  const e = (logs[key]||[]).find(x=>x.id===editLogId);
+  const newQty = parseFloat($('editLogQty').value);
+  if(!e || !newQty){ $('editLogPreview').textContent = ''; return; }
+  const ratio = newQty / e.qty;
+  $('editLogPreview').textContent =
+    `${Math.round(e.cal*ratio)} kcal · ${(e.prot*ratio).toFixed(1)}g prot · ${(e.lip*ratio).toFixed(1)}g lip · ${(e.gluc*ratio).toFixed(1)}g gluc`;
+}
+
+async function saveEditLogEntry(){
+  const key = todayKey();
+  const e = (logs[key]||[]).find(x=>x.id===editLogId);
+  const newQty = parseFloat($('editLogQty').value);
+  if(!e || !newQty) return;
+  const ratio = newQty / e.qty;
+  e.cal *= ratio; e.prot *= ratio; e.lip *= ratio; e.gluc *= ratio;
+  e.qty = newQty;
+  await saveLogs();
+  closeModal('modalEditLog');
+  showToast(`Quantité mise à jour`);
+  render();
+}
+
+function renderJournal(){
+  const key = todayKey();
+  const today = new Date();
+  $('todayLabel').textContent = today.toLocaleDateString('fr-FR',{weekday:'long', day:'numeric', month:'long'});
+  const hr = today.getHours();
+  $('greeting').textContent = hr<12?'Bonjour':(hr<18?'Salut':'Bonsoir');
+
+  const entries = logs[key] || [];
+  const totals = sumMacros(entries);
+
+  $('valCal').innerHTML = `${Math.round(totals.cal)} <span class="goal">/${settings.calGoal}</span>`;
+  $('valProt').innerHTML = `${Math.round(totals.prot)} <span class="goal">/${settings.protGoal}g</span>`;
+  $('valLip').innerHTML = `${Math.round(totals.lip)} <span class="goal">/${settings.lipGoal}g</span>`;
+  $('valGluc').innerHTML = `${Math.round(totals.gluc)} <span class="goal">/${settings.glucGoal}g</span>`;
+
+  setRing('ringCal', 52, totals.cal/settings.calGoal);
+  setRing('ringProt', 40, totals.prot/settings.protGoal);
+  setRing('ringLip', 28, totals.lip/settings.lipGoal);
+  setRing('ringGluc', 16, totals.gluc/settings.glucGoal);
+
+  renderPoids();
+
+  const list = $('todayLog');
+  if(entries.length===0){
+    list.innerHTML = `<div class="empty">Rien d'ajouté aujourd'hui.</div>`;
+  } else {
+    const rev = entries.slice().reverse();
+    list.innerHTML = rev.map(e=>`
+      <div class="log-entry" data-id="${e.id}">
+        <div class="log-entry-main">
+          <div class="name">${escapeHtml(e.name)}</div>
+          <div class="qty">${e.qty}g · ${e.prot.toFixed(1)}g P · ${e.lip.toFixed(1)}g L · ${e.gluc.toFixed(1)}g G</div>
+        </div>
+        <div style="display:flex;align-items:center;">
+          <div class="cal mono">${Math.round(e.cal)}</div>
+          <button class="del" data-del="${e.id}">×</button>
+        </div>
+      </div>`).join('');
+  }
+}
+// Délégation posée une seule fois : le journal du jour se ré-affiche à chaque
+// ajout/suppression d'aliment, donc ré-attacher un listener par ligne à chaque
+// fois était refait en permanence pour rien.
+$('todayLog').addEventListener('click', e=>{
+  const delBtn = e.target.closest('[data-del]');
+  if(delBtn){ e.stopPropagation(); deleteLogEntry(delBtn.dataset.del); return; }
+  const main = e.target.closest('.log-entry-main');
+  if(main) editLogEntry(main.closest('.log-entry').dataset.id);
+});
+
+// Circonférences précalculées une seule fois (les rayons des anneaux sont fixes) :
+// évite de refaire 2*Math.PI*r pour les 4 anneaux à chaque rendu du journal
+// (donc à chaque ajout/suppression d'aliment).
+const RING_CIRC = {};
+function setRing(id, r, frac){
+  const c = RING_CIRC[id] || (RING_CIRC[id] = 2*Math.PI*r);
+  frac = Math.max(0, Math.min(frac, 1));
+  const el = $(id);
+  el.style.strokeDasharray = c;
+  el.style.strokeDashoffset = c*(1-frac);
+  el.style.transition = 'stroke-dashoffset .4s ease';
+}
+
+/* ---------- aliments ---------- */
+let productModalFromLog = false;
+let editingProductId = null;
+
+function openProductModal(fromLog){
+  productModalFromLog = !!fromLog;
+  editingProductId = null;
+  if(fromLog) closeModal('modalLog');
+  $('productModalTitle').textContent = 'Nouvel aliment';
+  $('saveProductBtn').textContent = "Enregistrer l'aliment";
+  $('barcodeInput').value='';
+  $('offStatus').textContent='';
+  $('offStatus').className='off-status';
+  ['prodName','prodCal','prodProt','prodLip','prodGluc'].forEach(id=>$(id).value='');
+  $('deleteProductBtn').style.display = 'none';
+  openModal('modalProduct');
+}
+
+function editProduct(id){
+  const p = productsById.get(id);
+  if(!p) return;
+  productModalFromLog = false;
+  editingProductId = id;
+  $('productModalTitle').textContent = 'Modifier l\'aliment';
+  $('saveProductBtn').textContent = 'Enregistrer les modifications';
+  $('barcodeInput').value = p.barcode || '';
+  $('offStatus').textContent='';
+  $('offStatus').className='off-status';
+  $('prodName').value = p.name;
+  $('prodCal').value = p.cal;
+  $('prodProt').value = p.prot;
+  $('prodLip').value = p.lip;
+  $('prodGluc').value = p.gluc;
+  $('deleteProductBtn').style.display = 'block';
+  openModal('modalProduct');
+}
+
+// Supprime l'aliment en cours d'édition depuis la modale elle-même.
+function deleteProductFromModal(){
+  if(!editingProductId) return;
+  confirmDeleteProduct(editingProductId);
+}
+
+async function lookupBarcode(){
+  const code = $('barcodeInput').value.trim();
+  const status = $('offStatus');
+  if(!code){ status.textContent='Entre un code-barres.'; status.className='off-status err'; return; }
+  status.textContent='Recherche sur Open Food Facts...';
+  status.className='off-status loading';
+  try{
+    const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json`);
+    const data = await res.json();
+    if(data.status!==1 || !data.product){
+      status.textContent="Produit introuvable sur Open Food Facts. Remplis les champs manuellement.";
+      status.className='off-status err';
+      return;
+    }
+    const p = data.product;
+    const n = p.nutriments || {};
+    $('prodName').value = p.product_name || p.generic_name || 'Produit sans nom';
+    $('prodCal').value = round1(n['energy-kcal_100g'] ?? n['energy-kcal'] ?? '');
+    $('prodProt').value = round1(n['proteins_100g'] ?? '');
+    $('prodLip').value = round1(n['fat_100g'] ?? '');
+    $('prodGluc').value = round1(n['carbohydrates_100g'] ?? '');
+    status.textContent = `Trouvé : ${p.product_name || 'produit'} (${p.brands || 'marque inconnue'})`;
+    status.className='off-status ok';
+  }catch(e){
+    status.textContent = "Erreur réseau lors de la recherche.";
+    status.className='off-status err';
+  }
+}
+function round1(v){ return v===''||v==null ? '' : Math.round(v*10)/10; }
+
+/* ---------- scanner code-barres (caméra) ---------- */
+let html5QrcodeScanner = null;
+let html5QrcodeLibPromise = null;
+
+// La librairie (assez lourde) n'est chargée qu'au premier scan, pas au démarrage de l'app.
+function loadHtml5QrcodeLib(){
+  if(window.Html5Qrcode) return Promise.resolve();
+  if(html5QrcodeLibPromise) return html5QrcodeLibPromise;
+  html5QrcodeLibPromise = new Promise((resolve, reject)=>{
+    const script = document.createElement('script');
+    script.src = 'https://unpkg.com/html5-qrcode/minified/html5-qrcode.min.js';
+    script.onload = ()=>resolve();
+    script.onerror = ()=>{ html5QrcodeLibPromise = null; reject(new Error('lib load failed')); };
+    document.head.appendChild(script);
+  });
+  return html5QrcodeLibPromise;
+}
+
+async function openBarcodeScanner(){
+  const status = $('scannerStatus');
+  status.textContent = 'Chargement du scanner...';
+  status.className = 'off-status loading';
+  openModal('modalScanner');
+  try{
+    await loadHtml5QrcodeLib();
+    status.textContent = '';
+    status.className = 'off-status';
+    if(!html5QrcodeScanner){
+      html5QrcodeScanner = new Html5Qrcode('qrReader');
+    }
+    await html5QrcodeScanner.start(
+      { facingMode: 'environment' },
+      {
+        fps: 10,
+        qrbox: { width: 260, height: 140 },
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.UPC_A,
+          Html5QrcodeSupportedFormats.UPC_E,
+          Html5QrcodeSupportedFormats.CODE_128
+        ]
+      },
+      (decodedText)=>onBarcodeScanned(decodedText),
+      ()=>{} // échecs de lecture image par image : on ignore, c'est normal
+    );
+  }catch(e){
+    status.textContent = "Impossible d'accéder à la caméra (autorisation refusée ou non disponible). Tu peux entrer le code-barres à la main.";
+    status.className = 'off-status err';
+  }
+}
+
+async function stopBarcodeScanner(){
+  if(html5QrcodeScanner && html5QrcodeScanner.isScanning){
+    try{ await html5QrcodeScanner.stop(); }catch(e){}
+  }
+}
+
+async function closeScanner(){
+  await stopBarcodeScanner();
+  closeModal('modalScanner');
+}
+$('modalScanner').addEventListener('click', e=>{
+  if(e.target.id==='modalScanner') closeScanner();
+});
+
+async function onBarcodeScanned(decodedText){
+  await stopBarcodeScanner();
+  closeModal('modalScanner');
+  $('barcodeInput').value = decodedText;
+  showToast(`Code scanné : ${decodedText}`);
+  lookupBarcode();
+}
+
+async function saveProduct(){
+  const name = $('prodName').value.trim();
+  if(!name) return;
+  const barcode = $('barcodeInput').value.trim() || null;
+  const fields = {
+    name,
+    cal: parseFloat($('prodCal').value)||0,
+    prot: parseFloat($('prodProt').value)||0,
+    lip: parseFloat($('prodLip').value)||0,
+    gluc: parseFloat($('prodGluc').value)||0,
+    barcode
+  };
+
+  if(editingProductId){
+    const p = productsById.get(editingProductId);
+    if(p) Object.assign(p, fields);
+    if(p) p.nameLower = p.name.toLowerCase();
+    await saveProducts();
+    closeModal('modalProduct');
+    showToast(`${fields.name} mis à jour`);
+    editingProductId = null;
+    render();
+    return;
+  }
+
+  const newP = withNameLower({ id:uid(), ...fields });
+  products.push(newP);
+  productsById.set(newP.id, newP);
+  await saveProducts();
+  closeModal('modalProduct');
+  showToast(`${newP.name} ajouté à tes aliments`);
+  if(productModalFromLog){
+    productModalFromLog = false;
+    openLogModal(newP.id);
+  } else {
+    render();
+  }
+}
+async function deleteProduct(id){
+  products = products.filter(p=>p.id!==id);
+  reindexProducts();
+  await saveProducts();
+  render();
+}
+
+function confirmDeleteProduct(id){
+  const p = productsById.get(id);
+  if(!p) return;
+  askConfirm({
+    title: 'Supprimer cet aliment ?',
+    message: `« ${p.name} » sera définitivement supprimé de ta liste d'aliments.`,
+    actionLabel: 'Supprimer',
+    onConfirm: ()=>{ closeModal('modalProduct'); return deleteProduct(id); }
+  });
+}
+
+// Modale de confirmation générique, réutilisable pour toute action destructive.
+function askConfirm({ title, message, actionLabel, onConfirm }){
+  $('confirmTitle').textContent = title || 'Confirmer';
+  $('confirmMessage').textContent = message || '';
+  const btn = $('confirmActionBtn');
+  btn.textContent = actionLabel || 'Confirmer';
+  btn.onclick = async ()=>{
+    closeModal('modalConfirm');
+    await onConfirm();
+  };
+  openModal('modalConfirm');
+}
+
+function renderAliments(){
+  const q = ($('productSearch').value||'').toLowerCase();
+  const list = $('productList');
+  const filtered = products.filter(p=>p.nameLower.includes(q));
+  if(filtered.length===0){ list.innerHTML = `<div class="empty">Aucun aliment trouvé.</div>`; return; }
+  list.innerHTML = filtered.map(p=>`
+    <div class="product-item" onclick="editProduct('${p.id}')" style="cursor:pointer;">
+      <div style="flex:1;">
+        <div class="name">${escapeHtml(p.name)}</div>
+        <div class="macros">${p.cal} kcal · ${p.prot}g P · ${p.lip}g L · ${p.gluc}g G /100g</div>
+      </div>
+    </div>`).join('');
+}
+$('productSearch').addEventListener('input', renderAliments);
+
+/* ---------- repas (historique) ---------- */
+
+function formatDateFr(dateStr){
+  const label = new Date(dateStr+'T00:00:00').toLocaleDateString('fr-FR',{weekday:'long', day:'numeric', month:'long'});
+  return dateStr===todayKey() ? `Aujourd'hui — ${label}` : label;
+}
+
+function renderJours(){
+  const dates = Object.keys(logs).filter(d=>logs[d] && logs[d].length>0).sort((a,b)=>b.localeCompare(a));
+  const list = $('joursList');
+  if(dates.length===0){
+    list.innerHTML = `<div class="empty">Pas encore de journée enregistrée. Ajoute des aliments dans le Journal.</div>`;
+    return;
+  }
+  list.innerHTML = dates.map(d=>{
+    const entries = logs[d];
+    const t = sumMacros(entries);
+    return `<div class="day-item" data-date="${d}">
+      <div>
+        <div class="date">${formatDateFr(d)}</div>
+        <div class="sub">${Math.round(t.cal)} kcal · ${Math.round(t.prot)}g P · ${Math.round(t.lip)}g L · ${Math.round(t.gluc)}g G · ${entries.length} aliment${entries.length>1?'s':''}</div>
+      </div>
+      <span class="chev">›</span>
+    </div>`;
+  }).join('');
+}
+$('joursList').addEventListener('click', e=>{
+  const el = e.target.closest('.day-item');
+  if(el) openDayDetail(el.dataset.date);
+});
+
+function pushEntryToToday(e){
+  const key = todayKey();
+  if(!logs[key]) logs[key] = [];
+  logs[key].push({ id:uid(), name:e.name, qty:e.qty, cal:e.cal, prot:e.prot, lip:e.lip, gluc:e.gluc });
+}
+
+// Date du jour actuellement affiché dans la modale détail (null = modale fermée).
+// Utilisée par la délégation ci-dessous plutôt que des closures recréées à chaque
+// ouverture, et toujours relue via logs[dayDetailDate] pour rester à jour même si
+// la modale reste ouverte pendant qu'une action modifie logs.
+let dayDetailDate = null;
+
+function openDayDetail(date){
+  dayDetailDate = date;
+  const entries = logs[date] || [];
+  const t = sumMacros(entries);
+  $('dayDetailTitle').textContent = formatDateFr(date);
+  $('dayCal').textContent = Math.round(t.cal);
+  $('dayProt').textContent = Math.round(t.prot)+'g';
+  $('dayLip').textContent = Math.round(t.lip)+'g';
+  $('dayGluc').textContent = Math.round(t.gluc)+'g';
+
+  const box = $('dayFoodsList');
+  box.innerHTML = entries.map((e,i)=>`
+    <div class="log-entry">
+      <div>
+        <div class="name">${escapeHtml(e.name)}</div>
+        <div class="qty">${e.qty}g · ${e.prot.toFixed(1)}g P · ${e.lip.toFixed(1)}g L · ${e.gluc.toFixed(1)}g G</div>
+      </div>
+      <div style="display:flex;align-items:center;">
+        <div class="cal mono">${Math.round(e.cal)}</div>
+        <button class="del add-day-food" data-idx="${i}" title="Ajouter à aujourd'hui">+</button>
+      </div>
+    </div>`).join('');
+
+  openModal('modalDayDetail');
+}
+// Délégation posée une seule fois (au lieu de re-attacher un listener par aliment
+// à chaque ouverture de la modale détail d'un jour).
+$('dayFoodsList').addEventListener('click', async e=>{
+  const btn = e.target.closest('.add-day-food');
+  if(!btn || !dayDetailDate) return;
+  const entries = logs[dayDetailDate] || [];
+  const entry = entries[parseInt(btn.dataset.idx)];
+  if(!entry) return;
+  pushEntryToToday(entry);
+  await saveLogs();
+  showToast(`${entry.name} ajouté à aujourd'hui`);
+  renderJournal();
+});
+$('dayAddAllBtn').addEventListener('click', async ()=>{
+  if(!dayDetailDate) return;
+  const entries = logs[dayDetailDate] || [];
+  if(entries.length===0) return;
+  entries.forEach(pushEntryToToday);
+  await saveLogs();
+  showToast(`${entries.length} aliment${entries.length>1?'s':''} ajouté${entries.length>1?'s':''} à aujourd'hui`);
+  closeModal('modalDayDetail');
+  renderJournal();
+});
+
+/* ---------- poids ---------- */
+// Si la modale "Peser" a été ouverte depuis l'historique des pesées, on doit y
+// revenir en la fermant (fermer/annuler ou enregistrer), plutôt que de juste
+// fermer et laisser l'utilisateur sur le fond.
+let weightModalReturnToHistory = false;
+// Date d'origine de la pesée en cours d'édition (null = nouvelle pesée).
+// Permet de la supprimer de son ancienne date si l'utilisateur change la date.
+let editingWeightDate = null;
+
+function openWeightModal(forceMorning, fromHistory){
+  weightModalReturnToHistory = !!fromHistory;
+  editingWeightDate = null;
+  if(fromHistory) closeModal('modalWeightHistory');
+  const loggedToday = weights.some(w=>w.date===todayKey());
+  $('weightInput').value='';
+  $('weightDate').value = todayKey();
+  $('weightDate').max = todayKey();
+  $('deleteWeightBtn').style.display = 'none';
+  if(forceMorning || !loggedToday){
+    $('weightModalTitle').textContent = 'Bonjour 👋';
+    $('weightModalSub').textContent = "C'est l'heure de la pesée du matin. Combien tu fais aujourd'hui ?";
+  } else {
+    $('weightModalTitle').textContent = 'Peser';
+    $('weightModalSub').textContent = '';
+  }
+  openModal('modalWeight');
+}
+
+// Ouvre la modale "Peser" pré-remplie pour modifier une pesée existante
+// (depuis l'historique des pesées).
+function editWeight(date){
+  const w = weights.find(x=>x.date===date);
+  if(!w) return;
+  editingWeightDate = date;
+  weightModalReturnToHistory = true;
+  closeModal('modalWeightHistory');
+  $('weightInput').value = w.weight;
+  $('weightDate').value = w.date;
+  $('weightDate').max = todayKey();
+  $('weightModalTitle').textContent = 'Modifier la pesée';
+  $('weightModalSub').textContent = '';
+  $('deleteWeightBtn').style.display = 'block';
+  openModal('modalWeight');
+}
+
+function closeWeightModal(){
+  closeModal('modalWeight');
+  editingWeightDate = null;
+  if(weightModalReturnToHistory){
+    weightModalReturnToHistory = false;
+    openWeightHistory();
+  }
+}
+
+async function addWeight(){
+  const w = parseFloat($('weightInput').value);
+  const key = $('weightDate').value || todayKey();
+  if(!w) return;
+  // supprime l'entrée à la date cible (écrasement) ET l'ancienne entrée si on
+  // est en train de modifier une pesée et qu'on a changé sa date.
+  weights = weights.filter(x=>x.date!==key && x.date!==editingWeightDate);
+  weights.push({date:key, weight:w});
+  weights.sort((a,b)=>a.date.localeCompare(b.date));
+  await saveWeights();
+  closeWeightModal();
+  render();
+}
+async function deleteWeight(date){
+  weights = weights.filter(w=>w.date!==date);
+  await saveWeights();
+  render();
+}
+// Supprimer la pesée en cours d'édition depuis la modale elle-même (avec confirmation).
+function deleteWeightFromModal(){
+  if(!editingWeightDate) return;
+  const dateLabel = new Date(editingWeightDate+'T00:00:00').toLocaleDateString('fr-FR',{day:'2-digit', month:'long', year:'numeric'});
+  askConfirm({
+    title: 'Supprimer cette pesée ?',
+    message: `La pesée du ${dateLabel} sera définitivement supprimée.`,
+    actionLabel: 'Supprimer',
+    onConfirm: async ()=>{
+      await deleteWeight(editingWeightDate);
+      closeWeightModal();
+    }
+  });
+}
+
+// `weights` est toujours maintenu trié par date croissante (addWeight/deleteWeight
+// préservent l'ordre, DEFAULT_WEIGHTS l'est déjà au chargement) : inutile de
+// retrier à chaque lecture, ce qui évitait un .slice().sort() en double sur
+// chaque rendu (renderPoids était appelé depuis renderJournal à chaque ajout
+// d'aliment, sans rapport avec le poids).
+function getCurrentWeight(){
+  return weights.length ? weights[weights.length-1].weight : null;
+}
+
+// Affiche une valeur type "92.3 kg" avec le "kg" en plus petit, puis réduit
+// automatiquement la taille de police si besoin pour que ça tienne sur une
+// seule ligne dans la case (utile pour "Perdu" qui peut afficher "-12.5 kg").
+function setStatValue(id, numText){
+  const el = $(id);
+  if(numText==null){ el.textContent = '—'; el.style.fontSize=''; return; }
+  el.innerHTML = `<span class="num">${numText}</span><span class="unit">kg</span>`;
+  el.style.fontSize = '';
+  const maxFont = parseFloat(getComputedStyle(el).fontSize);
+  let size = maxFont;
+  // on réduit par petits pas tant que le contenu déborde de la case
+  while(el.scrollWidth > el.clientWidth && size > 9){
+    size -= 1;
+    el.style.fontSize = size+'px';
+  }
+}
+
+function renderPoids(){
+  const sorted = weights;
+  const current = getCurrentWeight();
+  const isPerte = settings.objectifType !== 'maintien';
+  $('weightModeBadge').textContent = 'Objectif : '+(isPerte ? 'Perte de poids' : 'Maintien du poids');
+  $('wRemainingBox').style.display = isPerte ? '' : 'none';
+  $('weightStatsGrid').classList.toggle('cols-3', !isPerte);
+  setStatValue('wCurrent', current ? current.toFixed(1) : null);
+  setStatValue('wGoalDisplay', settings.weightGoal);
+  setStatValue('wRemaining', current ? Math.max(0,(current-settings.weightGoal)).toFixed(1) : null);
+
+  // En perte de poids : Tendance = poids de la toute première pesée - poids de la dernière pesée
+  // (positif = perte, négatif = prise). En maintien : Différence = poids actuel - objectif
+  // (positif = au-dessus de l'objectif, négatif = en-dessous).
+  if(isPerte){
+    $('wLostLabel').textContent = 'Tendance';
+    if(sorted.length>=2){
+      const lost = sorted[0].weight - sorted[sorted.length-1].weight;
+      setStatValue('wLost', (lost>=0?'-':'+')+Math.abs(lost).toFixed(1));
+      const firstDateLabel = new Date(sorted[0].date+'T00:00:00').toLocaleDateString('fr-FR',{day:'2-digit', month:'short'});
+      $('wLostSince').textContent = 'depuis '+firstDateLabel;
+    } else {
+      setStatValue('wLost', null);
+      $('wLostSince').textContent = '';
+    }
+  } else {
+    $('wLostLabel').textContent = 'Écart';
+    if(current){
+      const diff = current - settings.weightGoal;
+      setStatValue('wLost', (diff>=0?'+':'-')+Math.abs(diff).toFixed(1));
+    } else {
+      setStatValue('wLost', null);
+    }
+    $('wLostSince').textContent = '';
+  }
+
+  // chart
+  const svg = $('weightSvg');
+  if(sorted.length<2){ svg.innerHTML = `<text x="240" y="70" fill="#565D6B" font-size="12" text-anchor="middle">Pas assez de données</text>`; }
+  else{
+    const vals = sorted.map(s=>s.weight);
+    const min = Math.min(...vals)-1, max = Math.max(...vals)+1;
+    const W=480,H=140,pad=10;
+    const pts = sorted.map((s,i)=>{
+      const x = pad + (i/(sorted.length-1))*(W-2*pad);
+      const y = H-pad - ((s.weight-min)/(max-min))*(H-2*pad);
+      return [x,y];
+    });
+    const path = pts.map((p,i)=>(i===0?'M':'L')+p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
+    const area = path + ` L${pts[pts.length-1][0]},${H-pad} L${pts[0][0]},${H-pad} Z`;
+    svg.innerHTML = `
+      <defs><linearGradient id="wgrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#C8FF4D" stop-opacity="0.25"/>
+        <stop offset="100%" stop-color="#C8FF4D" stop-opacity="0"/>
+      </linearGradient></defs>
+      <path d="${area}" fill="url(#wgrad)"/>
+      <path d="${path}" fill="none" stroke="#C8FF4D" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="${pts[pts.length-1][0]}" cy="${pts[pts.length-1][1]}" r="4" fill="#C8FF4D"/>
+    `;
+  }
+
+  const list = $('weightHistoryList');
+  const recent = sorted.slice().reverse();
+  if(recent.length===0){ list.innerHTML = `<div class="empty">Aucune pesée enregistrée.</div>`; return; }
+  list.innerHTML = recent.map(w=>`
+    <div class="weight-row" data-date="${w.date}" style="cursor:pointer;">
+      <span class="d">${new Date(w.date+'T00:00:00').toLocaleDateString('fr-FR',{weekday:'short', day:'2-digit', month:'short'})}</span>
+      <span class="w">${w.weight.toFixed(1)} kg</span>
+    </div>`).join('');
+}
+$('weightHistoryList').addEventListener('click', e=>{
+  const el = e.target.closest('.weight-row');
+  if(el) editWeight(el.dataset.date);
+});
+
+function openWeightHistory(){
+  renderPoids();
+  openModal('modalWeightHistory');
+}
+
+/* ---------- objectifs ---------- */
+let goalsAutosaveTimer;
+function scheduleGoalsAutosave(){
+  clearTimeout(goalsAutosaveTimer);
+  goalsAutosaveTimer = setTimeout(saveGoalsSilently, 400);
+}
+
+async function saveGoalsSilently(){
+  settings.calGoal = parseFloat($('goalCal').value)||2000;
+  settings.protGoal = parseFloat($('goalProt').value)||225;
+  settings.lipGoal = parseFloat($('goalLip').value)||56;
+  settings.glucGoal = parseFloat($('goalGluc').value)||150;
+  settings.deficit = parseFloat($('pDeficit').value)||500;
+  await saveSettings();
+}
+['goalCal','goalProt','goalLip','goalGluc'].forEach(id=>{
+  const el = $(id);
+  el.addEventListener('input', scheduleGoalsAutosave);
+  el.addEventListener('change', scheduleGoalsAutosave);
+});
+$('pDeficit').addEventListener('input', scheduleGoalsAutosave);
+$('pDeficit').addEventListener('change', scheduleGoalsAutosave);
+
+/* ---------- profil ---------- */
+function bmrOf(weightKg, taille, age, sexe){
+  const base = 10*weightKg + 6.25*taille - 5*age;
+  return sexe==='F' ? base-161 : base+5;
+}
+const ACTIVITY_MULT = {
+  'Sédentaire':1.2, 'Légèrement actif':1.375, 'Modérément actif':1.55, 'Très actif':1.725
+};
+const CAL_FLOOR = { H:1400, F:1200 }; // plancher de sécurité kcal/j
+
+// Point unique de calcul du poids de référence, du BMR et du TDEE.
+// Avant, ce calcul était dupliqué (et légèrement incohérent) dans 3 fonctions différentes.
+function computeTDEE(profile){
+  const isMaintien = profile.objectifType === 'maintien';
+  const fallback = DEFAULT_SETTINGS.weightGoal;
+  // en perte : priorité au poids actuel réellement pesé. En maintien : priorité au poids visé.
+  const poids = isMaintien
+    ? (profile.weightGoal || getCurrentWeight() || fallback)
+    : (getCurrentWeight() || profile.weightGoal || fallback);
+  const bmr = bmrOf(poids, profile.taille, profile.age, profile.sexe);
+  const tdee = bmr * (ACTIVITY_MULT[profile.activite] || 1.375);
+  return { poids, bmr, tdee, isMaintien };
+}
+
+// Répartition prot/lip/gluc pour un budget calorique donné. Utilisé à la fois par
+// la suggestion de l'app et par les cibles journalières basées sur le déficit choisi
+// par l'utilisateur, pour que la logique de répartition soit toujours identique.
+function macrosFromCal(cal, poids, muscu){
+  const protPerKg = muscu==='oui' ? 2.2 : 1.8;
+  // protéines : basées sur le poids (actuel en perte, visé en maintien), plus haut si musculation
+  let prot = protPerKg * poids;
+  // garde-fou : les protéines ne mangent jamais plus de 45% des calories (évite les valeurs aberrantes à faible budget calorique)
+  prot = Math.min(prot, (cal*0.45)/4);
+  // le reste des calories (après protéines) est réparti entre lipides et glucides
+  // en priorisant un peu les lipides (satiété, hormones) : 55% lipides / 45% glucides du reliquat
+  const remaining = Math.max(0, cal - prot*4);
+  const lip = (remaining*0.55)/9;
+  const gluc = (remaining*0.45)/4;
+  return { prot, lip, gluc };
+}
+
+function computeSuggestion(s){
+  s = s || settings;
+  const { poids, bmr, tdee, isMaintien } = computeTDEE(s);
+  // déficit conseillé : ~20% de la dépense, borné entre 300 et 750 kcal/j (perte raisonnable, ~0.3-0.7 kg/semaine)
+  const recommendedDeficit = Math.round(Math.min(750, Math.max(300, tdee*0.2)));
+  // la suggestion de l'app se base toujours sur le déficit conseillé, jamais sur celui saisi par l'utilisateur
+  const calBeforeFloor = isMaintien ? tdee : tdee - recommendedDeficit;
+  const calFloor = CAL_FLOOR[s.sexe] || CAL_FLOOR.H;
+  const cal = Math.max(calBeforeFloor, calFloor); // plancher de sécurité
+  const calFloorApplied = cal > calBeforeFloor;
+
+  const { prot, lip, gluc } = macrosFromCal(cal, poids, s.muscu);
+
+  return { tdee, cal, prot, lip, gluc, bmr, isMaintien, recommendedDeficit, calFloor, calFloorApplied, poids };
+}
+
+function readDraftProfile(){
+  const deficitRaw = $('pDeficit').value;
+  return {
+    sexe: $('pSexe').value,
+    age: parseFloat($('pAge').value) || settings.age,
+    taille: parseFloat($('pTaille').value) || settings.taille,
+    muscu: $('pMuscu').value,
+    activite: $('pActivite').value,
+    weightGoal: parseFloat($('pPoidsObjectif').value) || settings.weightGoal,
+    // champ vide -> reprend le dernier déficit connu plutôt que de tomber à 0
+    deficit: deficitRaw==='' ? (settings.deficit || 500) : (parseFloat(deficitRaw) || 0),
+    objectifType: document.querySelector('.seg-btn2.active').dataset.objtype
+  };
+}
+
+function renderSuggestionBox(s){
+  const r = computeSuggestion(s);
+
+  let html;
+  if(r.isMaintien){
+    html = `Sur la base de ton <strong style="color:var(--text)">poids visé (${s.weightGoal || '—'} kg)</strong>, ta dépense estimée pour <strong style="color:var(--text)">maintenir ce poids</strong> est d'environ <strong style="color:var(--text)">${Math.round(r.tdee)} kcal</strong>. ` +
+      `Aucun déficit n'est nécessaire ici. Les protéines sont calées ${s.muscu==='oui' ? 'plus haut car tu fais de la musculation' : 'à un niveau modéré'} pour entretenir ta masse musculaire.`;
+  } else {
+    const userDeficit = s.deficit || 0;
+    const weeklyLoss = (userDeficit*7/7700);
+    html = `Ta dépense estimée (poids actuel) est d'environ <strong style="color:var(--text)">${Math.round(r.tdee)} kcal</strong>. ` +
+      `Pour une perte de poids raisonnable et durable, l'app te conseille un déficit d'environ <strong style="color:var(--prot)">${r.recommendedDeficit} kcal/j</strong> ` +
+      `(soit ~${(r.recommendedDeficit*7/7700).toFixed(2)} kg perdus par semaine) — c'est ce déficit qu'utilisent les valeurs ci-dessous. ` +
+      `Les protéines sont calées ${s.muscu==='oui' ? 'plus haut car tu fais de la musculation' : 'à un niveau modéré'} pour préserver ta masse musculaire.`;
+    if(r.calFloorApplied){
+      html += ` <strong style="color:var(--danger)">⚠️ Avec ce déficit, l'objectif calorique tomberait sous le seuil de sécurité — il est donc relevé à ${r.calFloor} kcal/j.</strong>`;
+    }
+  }
+  $('profilSuggestion').innerHTML = html;
+
+  const deficitLossEl = $('deficitWeeklyLoss');
+  if(r.isMaintien){
+    deficitLossEl.textContent = '';
+  } else {
+    const userDeficit2 = s.deficit || 0;
+    const weeklyLoss2 = (userDeficit2*7/7700);
+    deficitLossEl.innerHTML = `Avec ce déficit, tu perdrais environ <strong style="color:var(--text)">${weeklyLoss2.toFixed(2)} kg/semaine</strong>.`;
+  }
+
+  $('suggestionGrid').innerHTML = `
+    <div class="activity-opt sel"><span>Calories</span><span class="kcal mono">${Math.round(r.cal)}</span></div>
+    <div class="activity-opt sel"><span>Protéines</span><span class="kcal mono">${Math.round(r.prot)}g</span></div>
+    <div class="activity-opt sel"><span>Lipides</span><span class="kcal mono">${Math.round(r.lip)}g</span></div>
+    <div class="activity-opt sel"><span>Glucides</span><span class="kcal mono">${Math.round(r.gluc)}g</span></div>
+  `;
+
+  const btn = $('useRecommendedDeficitBtn');
+  btn.style.display = 'none';
+  if(r.isMaintien){
+    // en maintien, les cibles journalières sont toujours calquées sur la suggestion
+    $('goalCal').value = Math.round(r.cal);
+    $('goalProt').value = Math.round(r.prot);
+    $('goalLip').value = Math.round(r.lip);
+    $('goalGluc').value = Math.round(r.gluc);
+  }
+}
+
+function renderProfil(){
+  $('pSexe').value = settings.sexe;
+  $('pAge').value = settings.age;
+  $('pTaille').value = settings.taille;
+  $('pMuscu').value = settings.muscu;
+  $('pActivite').value = settings.activite;
+  $('pPoidsObjectif').value = settings.weightGoal;
+  $('pDeficit').value = settings.deficit;
+
+  document.querySelectorAll('.seg-btn2').forEach(b=>{
+    b.classList.toggle('active', b.dataset.objtype===settings.objectifType);
+  });
+  $('deficitField').style.display = settings.objectifType==='maintien' ? 'none' : 'block';
+  setCiblesEditable(settings.objectifType!=='maintien');
+
+  const cw = getCurrentWeight();
+  $('pPoidsActuel').value = cw ? cw.toFixed(1)+' kg' : 'pas encore pesé';
+
+  renderSuggestionBox(settings);
+
+  $('goalCal').value = settings.calGoal;
+  $('goalProt').value = settings.protGoal;
+  $('goalLip').value = settings.lipGoal;
+  $('goalGluc').value = settings.glucGoal;
+}
+
+function setCiblesEditable(editable){
+  $('goalCal').disabled = !editable;
+}
+
+// Applique un budget calorique donné aux 4 champs "Tes cibles journalières"
+// (calories + les 3 macros recalculées avec la même logique que la suggestion).
+function applyCalToCiblesFields(cal, poids, muscu){
+  const { prot, lip, gluc } = macrosFromCal(cal, poids, muscu);
+  $('goalCal').value = Math.round(cal);
+  $('goalProt').value = Math.round(prot);
+  $('goalLip').value = Math.round(lip);
+  $('goalGluc').value = Math.round(gluc);
+  // les 4 champs ont été modifiés par script (pas de saisie utilisateur), donc aucun
+  // event 'input' ne s'est déclenché : on planifie nous-même la sauvegarde.
+  scheduleGoalsAutosave();
+}
+
+function updateGoalCalFromDeficit(){
+  const draft = readDraftProfile();
+  if(draft.objectifType==='maintien') return;
+  const { tdee, poids } = computeTDEE(draft);
+  const calFloor = CAL_FLOOR[draft.sexe] || CAL_FLOOR.H;
+  const cal = Math.max(tdee - (draft.deficit || 0), calFloor);
+  applyCalToCiblesFields(cal, poids, draft.muscu);
+}
+
+function updateDeficitFromGoalCal(){
+  const draft = readDraftProfile();
+  if(draft.objectifType==='maintien') return;
+  const { tdee, poids } = computeTDEE(draft);
+  const newCal = parseFloat($('goalCal').value) || 0;
+  $('pDeficit').value = Math.round(tdee - newCal);
+  applyCalToCiblesFields(newCal, poids, draft.muscu);
+  renderSuggestionBox(readDraftProfile());
+}
+$('goalCal').addEventListener('input', updateDeficitFromGoalCal);
+
+let profileAutosaveTimer;
+function scheduleProfileAutosave(){
+  clearTimeout(profileAutosaveTimer);
+  profileAutosaveTimer = setTimeout(saveProfileSilently, 400);
+}
+
+async function saveProfileSilently(){
+  settings.sexe = $('pSexe').value;
+  settings.age = parseFloat($('pAge').value)||DEFAULT_SETTINGS.age;
+  settings.taille = parseFloat($('pTaille').value)||DEFAULT_SETTINGS.taille;
+  settings.muscu = $('pMuscu').value;
+  settings.activite = $('pActivite').value;
+  settings.weightGoal = parseFloat($('pPoidsObjectif').value)||DEFAULT_SETTINGS.weightGoal;
+  settings.objectifType = document.querySelector('.seg-btn2.active').dataset.objtype;
+
+  if(settings.objectifType==='maintien'){
+    const s = computeSuggestion(settings);
+    settings.calGoal = Math.round(s.cal);
+    settings.protGoal = Math.round(s.prot);
+    settings.lipGoal = Math.round(s.lip);
+    settings.glucGoal = Math.round(s.gluc);
+  }
+
+  await saveSettings();
+}
+// Point d'entrée unique pour tout changement d'un champ profil : met à jour
+// la carte "Suggestion de l'app", le déficit/calories calculés, et planifie
+// la sauvegarde. Avant, ces 3 effets étaient câblés séparément (4 boucles
+// forEach différentes sur les mêmes champs, à des endroits différents du fichier).
+const PROFILE_FIELD_IDS = ['pSexe','pAge','pTaille','pMuscu','pActivite','pPoidsObjectif','pDeficit'];
+function onProfileFieldChange(){
+  const draft = readDraftProfile();
+  renderSuggestionBox(draft);
+  updateGoalCalFromDeficit();
+  scheduleProfileAutosave();
+}
+PROFILE_FIELD_IDS.forEach(id=>{
+  const el = $(id);
+  el.addEventListener('input', onProfileFieldChange);
+  el.addEventListener('change', onProfileFieldChange);
+});
+document.querySelectorAll('.seg-btn2').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.seg-btn2').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    const isMaintien = btn.dataset.objtype==='maintien';
+    $('deficitField').style.display = isMaintien ? 'none' : 'block';
+    setCiblesEditable(!isMaintien);
+    onProfileFieldChange();
+  });
+});
+
+async function applySuggestion(){
+  // on force la synchro du profil AVANT de calculer, sinon un clic rapide après avoir
+  // tapé dans un champ pouvait appliquer une suggestion basée sur des données pas encore sauvegardées
+  await saveProfileSilently();
+  const s = computeSuggestion(settings);
+  if(!s.isMaintien){
+    // le déficit conseillé n'est plus qu'un affichage (non cliquable) : c'est ici,
+    // via "Appliquer ces objectifs", qu'il est effectivement appliqué.
+    settings.deficit = s.recommendedDeficit;
+  }
+  settings.calGoal = Math.round(s.cal);
+  settings.protGoal = Math.round(s.prot);
+  settings.lipGoal = Math.round(s.lip);
+  settings.glucGoal = Math.round(s.gluc);
+  await saveSettings();
+  showToast('Objectifs mis à jour');
+  render();
+}
+
+/* ---------- render dispatch ---------- */
+function render(){
+  renderJournal();
+  if(currentTab==='repas'){ renderJours(); }
+  if(currentTab==='aliments') renderAliments();
+  if(currentTab==='profil') renderProfil();
+}
+
+/* ---------- init ---------- */
+(async function init(){
+  await loadAll();
+  render();
+  // rappel automatique de la pesée du matin si pas encore fait aujourd'hui
+  const loggedToday = weights.some(w=>w.date===todayKey());
+  if(!loggedToday){
+    setTimeout(()=>openWeightModal(true), 500);
+  }
+})();
+</script>
+</body>
+</html>
