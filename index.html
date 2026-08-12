@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -28,7 +28,7 @@
     --radius:16px;
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
-  html,body{margin:0;padding:0;}
+  html,body{margin:0;padding:0; touch-action:manipulation;}
   body{
     background:var(--bg);
     color:var(--text);
@@ -40,7 +40,7 @@
   body.has-addbar{ padding-bottom:134px; }
   .mono{font-family:'JetBrains Mono',monospace;}
   header.top{
-    padding:16px 20px 8px;
+    padding:calc(16px + env(safe-area-inset-top)) 20px 8px;
     display:flex; align-items:baseline; justify-content:space-between;
   }
   header.top .day{font-size:12px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.08em;}
@@ -120,9 +120,15 @@
   .field{margin-bottom:11px;}
   .field label{display:block; font-size:12px; color:var(--text-dim); margin-bottom:5px;}
   .field input, .field select{
-    width:100%; background:var(--surface2); border:1px solid var(--border);
+    width:100%; max-width:100%; min-width:0; background:var(--surface2); border:1px solid var(--border);
     color:var(--text); border-radius:10px; padding:10px 12px; font-size:15px;
     font-family:'Space Grotesk',sans-serif;
+  }
+  /* input[type=date] a une largeur interne (shadow DOM) que Safari iOS n'écrase pas
+     toujours avec width:100%, ce qui le fait déborder de sa case dans la modale. */
+  .field input[type="date"]{
+    -webkit-appearance:none; appearance:none;
+    display:block; overflow:hidden;
   }
   .field input:focus, .field select:focus{outline:none; border-color:var(--prot);}
   .field input:disabled, .field input:read-only, .btn:disabled{opacity:0.45; cursor:not-allowed;}
@@ -208,14 +214,17 @@
   .weight-stats{display:flex; gap:10px; margin-bottom:12px;}
   .weight-stats-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:6px;}
   .weight-stats-grid.cols-3{grid-template-columns:repeat(3,1fr);}
-  .weight-stats-grid .wstat{padding:8px 6px;}
-  .weight-stats-grid .v{font-size:15px;}
   .wstat .sub{font-size:10px; color:var(--text-faint); margin-top:2px;}
-  .wstat{flex:1; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:11px;}
-  .wstat .l{font-size:11px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.06em;}
+  .wstat{flex:1; min-width:0; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:11px;}
+  .wstat .l{font-size:11px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.06em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .wstat .v{font-family:'JetBrains Mono',monospace; font-size:20px; font-weight:600; margin-top:3px;}
-  #wCurrent, #wGoalDisplay, #wRemaining, #wLost{white-space:nowrap; overflow:hidden; display:flex; align-items:baseline; justify-content:center; gap:3px;}
+  #wCurrent, #wGoalDisplay, #wRemaining, #wLost{white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:baseline; justify-content:center; gap:3px; min-width:0;}
   .wstat .v .unit{font-size:0.62em; font-weight:500; color:var(--text-dim);}
+  /* les 4 cases de la grille "Poids" sont plus étroites : on force min-width:0 pour
+     qu'elles puissent rétrécir sous leur contenu, et une taille de police réduite,
+     déclarée ici APRÈS .wstat .v pour ne pas être écrasée par la cascade. */
+  .weight-stats-grid .wstat{padding:8px 4px; min-width:0;}
+  .weight-stats-grid .v{font-size:14px;}
   .weight-row{
     background:var(--surface); border:1px solid var(--border); border-radius:12px;
     padding:10px 14px; display:flex; justify-content:space-between; margin-bottom:6px; font-size:14px;
