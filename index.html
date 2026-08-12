@@ -223,6 +223,7 @@
   .off-status.err{color:var(--danger);}
   .off-status.loading{color:var(--text-dim);}
   #qrReader{transition:box-shadow .15s ease;}
+  #qrReader.scan-flash{box-shadow:0 0 0 3px var(--prot) inset;}
 
   /* weight */
   .weight-chart{background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:14px; margin-bottom:12px;}
@@ -422,7 +423,16 @@
       <input type="file" id="importDataInput" accept="application/json" style="display:none;">
       <div class="off-status" id="backupStatus" style="margin-top:8px;"></div>
     </div>
+
+    <div class="goal-card goal-card-compact">
+      <h3>Zone dangereuse</h3>
+      <div style="font-size:12px; color:var(--text-dim); line-height:1.5; margin-bottom:10px;">
+        Supprime définitivement tout ce qui est enregistré sur cet appareil : aliments, journal, pesées et profil. L'app repart à zéro, comme à la toute première ouverture.
+      </div>
+      <button class="btn" style="background:var(--danger); color:#fff;" onclick="resetApp()">Réinitialiser l'app (tout supprimer)</button>
+    </div>
   </section>
+
 
   </main>
 </div>
@@ -459,7 +469,7 @@
       <div class="barcode-row">
         <input type="text" id="logBarcodeInput" inputmode="numeric" placeholder="ex: 3017620422003">
         <button onclick="lookupBarcodeInLog()">Chercher</button>
-        <button onclick="openBarcodeScanner('log')" title="Prendre une photo du code-barres">📷</button>
+        <button onclick="openBarcodeScanner('log')" title="Scanner avec l'appareil photo">📷</button>
       </div>
       <div class="off-status" id="logBarcodeStatus"></div>
     </div>
@@ -508,7 +518,7 @@
       <div class="barcode-row">
         <input type="text" id="barcodeInput" inputmode="numeric" placeholder="ex: 3017620422003">
         <button onclick="lookupBarcode()">Chercher</button>
-        <button onclick="openBarcodeScanner()" title="Prendre une photo du code-barres">📷</button>
+        <button onclick="openBarcodeScanner()" title="Scanner avec l'appareil photo">📷</button>
       </div>
       <div class="off-status" id="offStatus"></div>
     </div>
@@ -578,19 +588,13 @@
   </div>
 </div>
 
-<!-- input caché : déclenche l'appareil photo natif du téléphone (capture=environment),
-     réutilisé aussi bien depuis "Nouvel aliment" que depuis "Ajouter au journal". -->
-<input type="file" id="barcodePhotoInput" accept="image/*" capture="environment" style="display:none;">
-
-<!-- MODAL: analyse d'une photo de code-barres/QR -->
+<!-- MODAL: scanner code-barres/QR (caméra en direct) -->
 <div class="modal-backdrop" id="modalScanner">
   <div class="modal">
     <button class="modal-close" onclick="closeScanner()">×</button>
-    <h2>Analyse de la photo</h2>
-    <img id="scannedPhotoPreview" style="width:100%; border-radius:12px; margin-bottom:10px; display:none;">
-    <div id="qrReader" style="display:none;"></div>
-    <div class="off-status" id="scannerStatus"></div>
-    <button class="btn btn-ghost" style="margin-top:14px;" onclick="closeScanner()">Annuler</button>
+    <h2>Scanner un code-barres</h2>
+    <div id="qrReader" style="width:100%; border-radius:12px; overflow:hidden; background:#000;"></div>
+    <div class="off-status" id="scannerStatus" style="margin-top:10px;"></div>
   </div>
 </div>
 
@@ -815,6 +819,24 @@ $('importDataInput').addEventListener('change', async e=>{
     }
   });
 });
+
+// Efface tout ce que l'app a enregistré sur cet appareil (aliments, journal,
+// pesées, réglages, noms de jours) et redémarre proprement, comme à la toute
+// première ouverture — utile après avoir retiré les données de démo du code,
+// pour purger ce qui avait déjà été sauvegardé avant ce changement.
+function resetApp(){
+  askConfirm({
+    title: "Réinitialiser l'app ?",
+    message: "Tout ce qui est enregistré sur cet appareil (aliments, journal, pesées, profil) sera définitivement supprimé. Pense à exporter une sauvegarde avant si tu n'es pas sûr.",
+    actionLabel: 'Tout supprimer',
+    onConfirm: async ()=>{
+      for(const key of ['products','logs','weights','settings','dayNames']){
+        localStorage.removeItem(key);
+      }
+      location.reload();
+    }
+  });
+}
 
 /* ---------- tabs ---------- */
 const TAB_ORDER = ['journal','repas','aliments','profil'];
@@ -1435,14 +1457,19 @@ async function lookupBarcodeInLog(){
   }
 }
 
-/* ---------- scan code-barres/QR à partir d'une photo ----------
-   Avant : flux vidéo caméra en direct (Html5Qrcode.start), qui posait des soucis
-   de mise en page/permissions sur certains mobiles et gardait la caméra active.
-   Maintenant : on utilise l'appareil photo natif du téléphone (input file avec
-   capture="environment", qui ouvre directement l'appli caméra native) pour prendre
-   UNE photo, puis on l'analyse une seule fois avec Html5Qrcode.scanFile(). Plus
-   simple, plus fiable (l'autofocus/l'exposition natifs sont meilleurs qu'un flux
-   vidéo web), et la caméra se referme d'elle-même après la photo. */
+/* ---------- scanner code-barres/QR (caméra en direct) ----------
+   Flux vidéo continu comme avant, mais nettement plus rapide à détecter :
+   - useBarCodeDetectorIfSupported : quand le téléphone/navigateur expose l'API
+     native BarcodeDetector (Chrome/Android notamment), la lib s'en sert au lieu
+     de décoder image par image en JS pur — c'est l'API du système d'exploitation,
+     largement plus rapide qu'un décodage logiciel.
+   - fps relevé à 20 (au lieu de 10) : deux fois plus de tentatives de lecture
+     par seconde.
+   - zone de scan (qrbox) resserrée à la largeur/hauteur typique d'un code-barres
+     produit : moins de pixels à analyser à chaque frame = décodage plus rapide,
+     sans perdre en fiabilité puisque les codes-barres sont toujours horizontaux.
+   - disableFlip : on ne teste pas l'image en miroir (inutile avec une caméra
+     arrière), ce qui évite de doubler le travail de décodage à chaque frame. */
 let html5QrcodeScanner = null;
 let html5QrcodeLibPromise = null;
 
@@ -1462,8 +1489,17 @@ function loadHtml5QrcodeLib(){
   return html5QrcodeLibPromise;
 }
 
-// Formats reconnus sur la photo : les codes-barres produit habituels (EAN/UPC/CODE128)
-// + QR_CODE, au cas où un produit ou un lien serait encodé en QR plutôt qu'en code-barres.
+// Laisse le temps au navigateur de terminer la mise en page de la modale
+// (display:none -> flex) avant de mesurer/démarrer la caméra dans #qrReader :
+// sans ça, sur certains mobiles, le conteneur est encore mesuré à 0x0 et le
+// scanner démarre avec une taille de vidéo nulle, donc rien ne se lit jamais.
+function nextFrame(){
+  return new Promise(resolve => requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+}
+
+// Formats reconnus : codes-barres produit habituels (EAN/UPC/CODE128) + QR_CODE.
+// Restreindre les formats (au lieu de tout tester) accélère aussi le décodage,
+// puisque la lib n'essaie pas des familles de codes qu'on ne cherche jamais ici.
 const barcodeFormats = ()=>[
   Html5QrcodeSupportedFormats.EAN_13,
   Html5QrcodeSupportedFormats.EAN_8,
@@ -1477,67 +1513,103 @@ const barcodeFormats = ()=>[
 // pour savoir quel champ remplir et quelle recherche lancer une fois un code détecté.
 let scanContext = 'product';
 
-// Déclenche l'appareil photo natif (pas notre modale — c'est l'appli caméra du
-// téléphone qui prend l'écran). On repart de zéro à chaque appel (value='') pour
-// que reprendre une 2e photo redéclenche bien l'événement 'change' même si elle
-// porte le même nom de fichier que la précédente.
-function openBarcodeScanner(context){
+async function openBarcodeScanner(context){
   scanContext = context || 'product';
-  const input = $('barcodePhotoInput');
-  input.value = '';
-  input.click();
-}
-
-async function onBarcodePhotoSelected(e){
-  const file = e.target.files && e.target.files[0];
-  if(!file) return;
   const status = $('scannerStatus');
-  const preview = $('scannedPhotoPreview');
-  if(preview.src) URL.revokeObjectURL(preview.src);
-  preview.src = URL.createObjectURL(file);
-  preview.style.display = 'block';
-  status.textContent = 'Analyse de la photo...';
+  scanLocked = false;
+  status.textContent = 'Chargement du scanner...';
   status.className = 'off-status loading';
+  $('qrReader').classList.remove('scan-flash');
   openModal('modalScanner');
   try{
     await loadHtml5QrcodeLib();
+    await nextFrame();
+    status.textContent = 'Vise le code-barres avec la caméra...';
+    status.className = 'off-status';
     if(!html5QrcodeScanner){
       html5QrcodeScanner = new Html5Qrcode('qrReader', { formatsToSupport: barcodeFormats() });
     }
-    const decodedText = await html5QrcodeScanner.scanFile(file, false);
-    status.textContent = `✅ Code détecté : ${decodedText}`;
-    status.className = 'off-status ok';
-    if(navigator.vibrate){ try{ navigator.vibrate(80); }catch(err){} }
-    setTimeout(()=>{
-      closeScanner();
-      showToast(`Code scanné : ${decodedText}`);
-      if(scanContext==='log'){
-        $('logBarcodeInput').value = decodedText;
-        lookupBarcodeInLog();
-      } else {
-        $('barcodeInput').value = decodedText;
-        lookupBarcode();
-      }
-    }, 500);
-  }catch(err){
-    // scanFile rejette simplement quand aucun code n'est trouvé sur l'image :
-    // ce n'est pas une erreur technique, juste une photo à reprendre.
-    console.error('scanFile error', err);
-    status.textContent = "Aucun code détecté sur cette photo. Réessaie avec un cadrage net et bien éclairé.";
+    const scanConfig = {
+      fps: 20,
+      qrbox: { width: 280, height: 110 },
+      disableFlip: true,
+      formatsToSupport: barcodeFormats(),
+      // API de décodage native du système si disponible (bien plus rapide que le
+      // décodage JS pur utilisé sinon en repli automatique par la librairie).
+      experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+    };
+    try{
+      // 1er essai : caméra arrière via facingMode (fonctionne sur la grande majorité des tel).
+      await html5QrcodeScanner.start(
+        { facingMode: { exact: 'environment' } },
+        scanConfig,
+        (decodedText)=>onBarcodeScanned(decodedText),
+        ()=>{} // échecs de lecture image par image : on ignore, c'est normal
+      );
+    }catch(firstErr){
+      // Repli : certains appareils (surtout desktop, ou vieux Android) n'ont pas
+      // de caméra qui matche exactement "environment". On liste les caméras
+      // disponibles et on prend la dernière (souvent la caméra arrière).
+      const cameras = await Html5Qrcode.getCameras();
+      if(!cameras || !cameras.length) throw firstErr;
+      const cam = cameras.find(c=>/back|arri|rear|environment/i.test(c.label)) || cameras[cameras.length-1];
+      await html5QrcodeScanner.start(
+        cam.id,
+        scanConfig,
+        (decodedText)=>onBarcodeScanned(decodedText),
+        ()=>{}
+      );
+    }
+  }catch(e){
+    console.error('openBarcodeScanner error', e);
+    const detail = (e && (e.message || e.name)) ? ` (${e.message || e.name})` : '';
+    status.textContent = `Impossible d'accéder à la caméra${detail}. Tu peux entrer le code-barres à la main.`;
     status.className = 'off-status err';
   }
 }
-$('barcodePhotoInput').addEventListener('change', onBarcodePhotoSelected);
 
-function closeScanner(){
+async function stopBarcodeScanner(){
+  if(html5QrcodeScanner && html5QrcodeScanner.isScanning){
+    try{ await html5QrcodeScanner.stop(); }catch(e){}
+  }
+}
+
+async function closeScanner(){
+  scanLocked = false;
+  await stopBarcodeScanner();
   closeModal('modalScanner');
-  const preview = $('scannedPhotoPreview');
-  if(preview.src){ URL.revokeObjectURL(preview.src); preview.src=''; }
-  preview.style.display = 'none';
 }
 $('modalScanner').addEventListener('click', e=>{
   if(e.target.id==='modalScanner') closeScanner();
 });
+
+// verrou pour éviter que plusieurs frames déclenchent onBarcodeScanned en boucle
+// pendant le court délai où on affiche le message "code détecté"
+let scanLocked = false;
+
+async function onBarcodeScanned(decodedText){
+  if(scanLocked) return;
+  scanLocked = true;
+  const status = $('scannerStatus');
+  // feedback immédiat : message + flash visuel sur la zone caméra, avant de fermer
+  status.textContent = `✅ Code détecté : ${decodedText}`;
+  status.className = 'off-status ok';
+  $('qrReader').classList.add('scan-flash');
+  if(navigator.vibrate) { try{ navigator.vibrate(80); }catch(e){} }
+  setTimeout(async ()=>{
+    await stopBarcodeScanner();
+    closeModal('modalScanner');
+    $('qrReader').classList.remove('scan-flash');
+    showToast(`Code scanné : ${decodedText}`);
+    if(scanContext==='log'){
+      $('logBarcodeInput').value = decodedText;
+      lookupBarcodeInLog();
+    } else {
+      $('barcodeInput').value = decodedText;
+      lookupBarcode();
+    }
+  }, 350);
+}
 
 async function saveProduct(){
   const name = $('prodName').value.trim();
