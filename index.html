@@ -660,9 +660,12 @@ function reindexProducts(){
 // plutôt qu'à chaque frappe dans les barres de recherche (log + aliments), qui
 // filtrent potentiellement toute la liste à chaque keystroke.
 function withNameLower(p){ p.nameLower = p.name.toLowerCase(); return p; }
+// Aucune valeur personnelle ni objectif n'est préchargé : à la première ouverture
+// (ou après une réinitialisation), l'onglet Profil est entièrement vide et
+// attend que l'utilisateur remplisse lui-même ses informations.
 const DEFAULT_SETTINGS = {
-  calGoal:2000, protGoal:225, lipGoal:56, glucGoal:150, weightGoal:90,
-  sexe:'H', age:30, taille:178, muscu:'oui', activite:'Modérément actif', deficit:500,
+  calGoal:'', protGoal:'', lipGoal:'', glucGoal:'', weightGoal:'',
+  sexe:'', age:'', taille:'', muscu:'', activite:'', deficit:'',
   objectifType:'perte'
 };
 let settings = Object.assign({}, DEFAULT_SETTINGS);
@@ -1251,10 +1254,10 @@ function renderJournal(){
   const entries = logs[key] || [];
   const totals = sumMacros(entries);
 
-  $('valCal').innerHTML = `${Math.round(totals.cal)} <span class="goal">/${settings.calGoal}</span>`;
-  $('valProt').innerHTML = `${Math.round(totals.prot)} <span class="goal">/${settings.protGoal}g</span>`;
-  $('valLip').innerHTML = `${Math.round(totals.lip)} <span class="goal">/${settings.lipGoal}g</span>`;
-  $('valGluc').innerHTML = `${Math.round(totals.gluc)} <span class="goal">/${settings.glucGoal}g</span>`;
+  $('valCal').innerHTML = `${Math.round(totals.cal)} <span class="goal">/${settings.calGoal || '—'}</span>`;
+  $('valProt').innerHTML = `${Math.round(totals.prot)} <span class="goal">/${settings.protGoal || '—'}g</span>`;
+  $('valLip').innerHTML = `${Math.round(totals.lip)} <span class="goal">/${settings.lipGoal || '—'}g</span>`;
+  $('valGluc').innerHTML = `${Math.round(totals.gluc)} <span class="goal">/${settings.glucGoal || '—'}g</span>`;
 
   setRing('ringCal', 52, totals.cal/settings.calGoal);
   setRing('ringProt', 40, totals.prot/settings.protGoal);
@@ -1297,7 +1300,10 @@ $('todayLog').addEventListener('click', e=>{
 const RING_CIRC = {};
 function setRing(id, r, frac){
   const c = RING_CIRC[id] || (RING_CIRC[id] = 2*Math.PI*r);
-  frac = Math.max(0, Math.min(frac, 1));
+  // frac peut être NaN/Infinity si l'objectif (settings.xxxGoal) n'est pas encore
+  // rempli par l'utilisateur (division par 0 ou par une chaîne vide) : dans ce
+  // cas on affiche simplement un anneau vide plutôt que de propager NaN dans le CSS.
+  frac = Number.isFinite(frac) ? Math.max(0, Math.min(frac, 1)) : 0;
   const el = $(id);
   el.style.strokeDasharray = c;
   el.style.strokeDashoffset = c*(1-frac);
@@ -1457,25 +1463,99 @@ async function lookupBarcodeInLog(){
   }
 }
 
-/* ---------- scanner code-barres/QR (caméra en direct) ----------
-   Flux vidéo continu comme avant, mais nettement plus rapide à détecter :
-   - useBarCodeDetectorIfSupported : quand le téléphone/navigateur expose l'API
-     native BarcodeDetector (Chrome/Android notamment), la lib s'en sert au lieu
-     de décoder image par image en JS pur — c'est l'API du système d'exploitation,
-     largement plus rapide qu'un décodage logiciel.
-   - fps relevé à 20 (au lieu de 10) : deux fois plus de tentatives de lecture
-     par seconde.
-   - zone de scan (qrbox) resserrée à la largeur/hauteur typique d'un code-barres
-     produit : moins de pixels à analyser à chaque frame = décodage plus rapide,
-     sans perdre en fiabilité puisque les codes-barres sont toujours horizontaux.
-   - disableFlip : on ne teste pas l'image en miroir (inutile avec une caméra
-     arrière), ce qui évite de doubler le travail de décodage à chaque frame. */
+/* ---------- scanner code-barres (caméra en direct) — perf maximale ----------
+   Deux chemins, du plus rapide au plus compatible :
+
+   1) CHEMIN NATIF (utilisé dès que le navigateur l'expose — Chrome/Android
+      essentiellement) : on pilote nous-mêmes le flux caméra (getUserMedia) et
+      on appelle l'API native BarcodeDetector directement sur chaque frame vidéo,
+      SANS passer par la librairie html5-qrcode. On élimine ainsi toute la
+      couche JS de la lib (son propre polling à fps fixe, ses conversions
+      canvas) : le décodage tourne à la vitesse du système d'exploitation,
+      cadencé par requestVideoFrameCallback (déclenché à chaque frame vidéo
+      réellement affichée, donc plus réactif qu'un minuteur à fps fixe).
+
+   2) REPLI (Safari/iOS notamment, où BarcodeDetector n'existe pas encore) :
+      html5-qrcode comme avant, mais poussé au maximum (fps élevé, zone de
+      scan resserrée, formats restreints).
+
+   Dans les deux cas, on ne cherche que des codes NUMÉRIQUES (EAN-13/EAN-8/
+   UPC-A/UPC-E) : ce sont les seuls formats utilisés par les codes-barres
+   produits (Open Food Facts), donc pas besoin de tester CODE_128 ou QR_CODE
+   à chaque frame — moins de formats testés = décodage plus rapide. */
+
+// contexte du scan en cours : 'product' (modale Nouvel aliment) ou 'log' (Ajouter au journal),
+// pour savoir quel champ remplir et quelle recherche lancer une fois un code détecté.
+let scanContext = 'product';
+
+// verrou pour éviter que plusieurs frames déclenchent onBarcodeScanned en boucle
+// pendant le court délai où on affiche le message "code détecté"
+let scanLocked = false;
+
+function supportsNativeBarcodeDetector(){
+  return typeof window.BarcodeDetector !== 'undefined';
+}
+
+/* --- chemin natif --- */
+let nativeVideoEl = null;
+let nativeStream = null;
+let nativeDetector = null;
+let nativeRafId = null;
+let nativeActive = false;
+
+async function startNativeScanner(){
+  nativeDetector = new BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','upc_e'] });
+  // résolution modérée mais nette : inutile de demander de la 4K (plus lent à
+  // décoder pour rien), 1280x720 est largement suffisant pour lire un EAN.
+  nativeStream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+  });
+  nativeVideoEl = document.createElement('video');
+  nativeVideoEl.setAttribute('playsinline', '');
+  nativeVideoEl.muted = true;
+  nativeVideoEl.style.cssText = 'width:100%; height:100%; object-fit:cover; display:block;';
+  nativeVideoEl.srcObject = nativeStream;
+  $('qrReader').innerHTML = '';
+  $('qrReader').appendChild(nativeVideoEl);
+  await nativeVideoEl.play();
+
+  nativeActive = true;
+  const detectLoop = async ()=>{
+    if(!nativeActive) return;
+    try{
+      const codes = await nativeDetector.detect(nativeVideoEl);
+      if(codes.length){ onBarcodeScanned(codes[0].rawValue); return; }
+    }catch(e){ /* frame ratée (ex: vidéo pas encore prête) : on retente à la suivante */ }
+    if(!nativeActive) return;
+    // requestVideoFrameCallback se déclenche à chaque frame vidéo réellement
+    // décodée par le hardware (jusqu'à ~30-60x/s) : plus réactif et plus
+    // économe qu'un setInterval/fps fixe côté JS.
+    if('requestVideoFrameCallback' in nativeVideoEl){
+      nativeVideoEl.requestVideoFrameCallback(detectLoop);
+    } else {
+      nativeRafId = requestAnimationFrame(detectLoop);
+    }
+  };
+  detectLoop();
+}
+
+function stopNativeScanner(){
+  nativeActive = false;
+  nativeDetector = null;
+  if(nativeRafId) cancelAnimationFrame(nativeRafId);
+  nativeRafId = null;
+  if(nativeStream){ nativeStream.getTracks().forEach(t=>t.stop()); nativeStream = null; }
+  if(nativeVideoEl){ nativeVideoEl.srcObject = null; nativeVideoEl = null; }
+}
+
+/* --- repli html5-qrcode (formats numériques uniquement, réglages poussés au max) --- */
 let html5QrcodeScanner = null;
 let html5QrcodeLibPromise = null;
+let usingFallbackScanner = false;
 
-// La librairie (assez lourde) n'est chargée qu'au premier scan, pas au démarrage de l'app.
-// Version figée (au lieu de la "latest" d'unpkg) pour ne pas casser le scan si une
-// nouvelle version de la lib change son API.
+// La librairie (assez lourde) n'est chargée qu'en repli, jamais si le chemin
+// natif fonctionne. Version figée (au lieu de la "latest" d'unpkg) pour ne pas
+// casser le scan si une nouvelle version de la lib change son API.
 function loadHtml5QrcodeLib(){
   if(window.Html5Qrcode) return Promise.resolve();
   if(html5QrcodeLibPromise) return html5QrcodeLibPromise;
@@ -1497,21 +1577,44 @@ function nextFrame(){
   return new Promise(resolve => requestAnimationFrame(()=>requestAnimationFrame(resolve)));
 }
 
-// Formats reconnus : codes-barres produit habituels (EAN/UPC/CODE128) + QR_CODE.
-// Restreindre les formats (au lieu de tout tester) accélère aussi le décodage,
-// puisque la lib n'essaie pas des familles de codes qu'on ne cherche jamais ici.
 const barcodeFormats = ()=>[
   Html5QrcodeSupportedFormats.EAN_13,
   Html5QrcodeSupportedFormats.EAN_8,
   Html5QrcodeSupportedFormats.UPC_A,
-  Html5QrcodeSupportedFormats.UPC_E,
-  Html5QrcodeSupportedFormats.CODE_128,
-  Html5QrcodeSupportedFormats.QR_CODE
+  Html5QrcodeSupportedFormats.UPC_E
 ];
 
-// contexte du scan en cours : 'product' (modale Nouvel aliment) ou 'log' (Ajouter au journal),
-// pour savoir quel champ remplir et quelle recherche lancer une fois un code détecté.
-let scanContext = 'product';
+async function startFallbackScanner(){
+  await loadHtml5QrcodeLib();
+  await nextFrame();
+  if(!html5QrcodeScanner){
+    html5QrcodeScanner = new Html5Qrcode('qrReader', { formatsToSupport: barcodeFormats() });
+  }
+  const scanConfig = {
+    fps: 30,
+    qrbox: { width: 280, height: 100 },
+    disableFlip: true,
+    formatsToSupport: barcodeFormats(),
+    experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+  };
+  try{
+    // 1er essai : caméra arrière via facingMode (fonctionne sur la grande majorité des tel).
+    await html5QrcodeScanner.start(
+      { facingMode: { exact: 'environment' } },
+      scanConfig,
+      (decodedText)=>onBarcodeScanned(decodedText),
+      ()=>{} // échecs de lecture image par image : on ignore, c'est normal
+    );
+  }catch(firstErr){
+    // Repli : certains appareils (surtout desktop, ou vieux Android) n'ont pas
+    // de caméra qui matche exactement "environment". On liste les caméras
+    // disponibles et on prend la dernière (souvent la caméra arrière).
+    const cameras = await Html5Qrcode.getCameras();
+    if(!cameras || !cameras.length) throw firstErr;
+    const cam = cameras.find(c=>/back|arri|rear|environment/i.test(c.label)) || cameras[cameras.length-1];
+    await html5QrcodeScanner.start(cam.id, scanConfig, (decodedText)=>onBarcodeScanned(decodedText), ()=>{});
+  }
+}
 
 async function openBarcodeScanner(context){
   scanContext = context || 'product';
@@ -1521,45 +1624,24 @@ async function openBarcodeScanner(context){
   status.className = 'off-status loading';
   $('qrReader').classList.remove('scan-flash');
   openModal('modalScanner');
+
+  if(supportsNativeBarcodeDetector()){
+    try{
+      usingFallbackScanner = false;
+      await startNativeScanner();
+      status.textContent = 'Vise le code-barres avec la caméra...';
+      status.className = 'off-status';
+      return;
+    }catch(e){
+      console.error('native scanner failed, repli sur html5-qrcode', e);
+      stopNativeScanner();
+    }
+  }
   try{
-    await loadHtml5QrcodeLib();
-    await nextFrame();
+    usingFallbackScanner = true;
+    await startFallbackScanner();
     status.textContent = 'Vise le code-barres avec la caméra...';
     status.className = 'off-status';
-    if(!html5QrcodeScanner){
-      html5QrcodeScanner = new Html5Qrcode('qrReader', { formatsToSupport: barcodeFormats() });
-    }
-    const scanConfig = {
-      fps: 20,
-      qrbox: { width: 280, height: 110 },
-      disableFlip: true,
-      formatsToSupport: barcodeFormats(),
-      // API de décodage native du système si disponible (bien plus rapide que le
-      // décodage JS pur utilisé sinon en repli automatique par la librairie).
-      experimentalFeatures: { useBarCodeDetectorIfSupported: true }
-    };
-    try{
-      // 1er essai : caméra arrière via facingMode (fonctionne sur la grande majorité des tel).
-      await html5QrcodeScanner.start(
-        { facingMode: { exact: 'environment' } },
-        scanConfig,
-        (decodedText)=>onBarcodeScanned(decodedText),
-        ()=>{} // échecs de lecture image par image : on ignore, c'est normal
-      );
-    }catch(firstErr){
-      // Repli : certains appareils (surtout desktop, ou vieux Android) n'ont pas
-      // de caméra qui matche exactement "environment". On liste les caméras
-      // disponibles et on prend la dernière (souvent la caméra arrière).
-      const cameras = await Html5Qrcode.getCameras();
-      if(!cameras || !cameras.length) throw firstErr;
-      const cam = cameras.find(c=>/back|arri|rear|environment/i.test(c.label)) || cameras[cameras.length-1];
-      await html5QrcodeScanner.start(
-        cam.id,
-        scanConfig,
-        (decodedText)=>onBarcodeScanned(decodedText),
-        ()=>{}
-      );
-    }
   }catch(e){
     console.error('openBarcodeScanner error', e);
     const detail = (e && (e.message || e.name)) ? ` (${e.message || e.name})` : '';
@@ -1569,8 +1651,12 @@ async function openBarcodeScanner(context){
 }
 
 async function stopBarcodeScanner(){
-  if(html5QrcodeScanner && html5QrcodeScanner.isScanning){
-    try{ await html5QrcodeScanner.stop(); }catch(e){}
+  if(usingFallbackScanner){
+    if(html5QrcodeScanner && html5QrcodeScanner.isScanning){
+      try{ await html5QrcodeScanner.stop(); }catch(e){}
+    }
+  } else {
+    stopNativeScanner();
   }
 }
 
@@ -1582,10 +1668,6 @@ async function closeScanner(){
 $('modalScanner').addEventListener('click', e=>{
   if(e.target.id==='modalScanner') closeScanner();
 });
-
-// verrou pour éviter que plusieurs frames déclenchent onBarcodeScanned en boucle
-// pendant le court délai où on affiche le message "code détecté"
-let scanLocked = false;
 
 async function onBarcodeScanned(decodedText){
   if(scanLocked) return;
@@ -1995,8 +2077,8 @@ function renderPoids(){
   $('wRemainingBox').style.display = isPerte ? '' : 'none';
   $('weightStatsGrid').classList.toggle('cols-3', !isPerte);
   setStatValue('wCurrent', current ? current.toFixed(1) : null);
-  setStatValue('wGoalDisplay', settings.weightGoal);
-  setStatValue('wRemaining', current ? Math.max(0,(current-settings.weightGoal)).toFixed(1) : null);
+  setStatValue('wGoalDisplay', settings.weightGoal || null);
+  setStatValue('wRemaining', (current && settings.weightGoal) ? Math.max(0,(current-settings.weightGoal)).toFixed(1) : null);
 
   // En perte de poids : Tendance = poids de la toute première pesée - poids de la dernière pesée
   // (positif = perte, négatif = prise). En maintien : Différence = poids actuel - objectif
@@ -2014,7 +2096,7 @@ function renderPoids(){
     }
   } else {
     $('wLostLabel').textContent = 'Écart';
-    if(current){
+    if(current && settings.weightGoal){
       const diff = current - settings.weightGoal;
       setStatValue('wLost', (diff>=0?'+':'-')+Math.abs(diff).toFixed(1));
     } else {
@@ -2075,11 +2157,14 @@ function scheduleGoalsAutosave(){
 }
 
 async function saveGoalsSilently(){
-  settings.calGoal = parseFloat($('goalCal').value)||2000;
-  settings.protGoal = parseFloat($('goalProt').value)||225;
-  settings.lipGoal = parseFloat($('goalLip').value)||56;
-  settings.glucGoal = parseFloat($('goalGluc').value)||150;
-  settings.deficit = parseFloat($('pDeficit').value)||500;
+  // Un champ laissé vide reste vide (chaîne '') plutôt que de retomber sur un
+  // chiffre codé en dur : sinon un objectif effacé par erreur réapparaissait
+  // tout seul avec une valeur qui n'était plus la sienne.
+  settings.calGoal = parseFloat($('goalCal').value) || '';
+  settings.protGoal = parseFloat($('goalProt').value) || '';
+  settings.lipGoal = parseFloat($('goalLip').value) || '';
+  settings.glucGoal = parseFloat($('goalGluc').value) || '';
+  settings.deficit = parseFloat($('pDeficit').value) || '';
   await saveSettings();
 }
 ['goalCal','goalProt','goalLip','goalGluc'].forEach(id=>{
@@ -2156,13 +2241,27 @@ function readDraftProfile(){
     muscu: $('pMuscu').value,
     activite: $('pActivite').value,
     weightGoal: parseFloat($('pPoidsObjectif').value) || settings.weightGoal,
-    // champ vide -> reprend le dernier déficit connu plutôt que de tomber à 0
-    deficit: deficitRaw==='' ? (settings.deficit || 500) : (parseFloat(deficitRaw) || 0),
+    // champ vide -> reprend le dernier déficit connu (peut lui-même être vide
+    // si le profil n'a jamais été rempli, plutôt que de tomber sur un chiffre arbitraire)
+    deficit: deficitRaw==='' ? (settings.deficit || '') : (parseFloat(deficitRaw) || 0),
     objectifType: document.querySelector('.seg-btn2.active').dataset.objtype
   };
 }
 
 function renderSuggestionBox(s){
+  // Tant que le strict minimum (sexe/âge/taille/activité) n'est pas renseigné,
+  // le calcul (BMR/TDEE) n'a pas de sens (il tournerait sur des valeurs vides) :
+  // on invite simplement à remplir le profil plutôt que d'afficher une estimation
+  // fantaisiste comme "environ 7 kcal".
+  const profileIncomplete = !s.sexe || !s.age || !s.taille || !s.activite;
+  if(profileIncomplete){
+    $('profilSuggestion').textContent = "Remplis ton sexe, ton âge, ta taille et ton niveau d'activité ci-dessus pour voir une suggestion personnalisée.";
+    $('deficitWeeklyLoss').textContent = '';
+    $('suggestionGrid').innerHTML = '';
+    $('useRecommendedDeficitBtn').style.display = 'none';
+    return;
+  }
+
   const r = computeSuggestion(s);
 
   let html;
