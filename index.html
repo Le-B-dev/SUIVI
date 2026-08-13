@@ -1178,15 +1178,28 @@ function unlockBodyScroll(){
   window.scrollTo(0, lockedScrollY);
 }
 
+// La couleur de la "barre système" iOS en bas de l'écran (zone home indicator,
+// pilotée par <meta name="theme-color">) reste figée sur --bg (quasi noir) tant
+// qu'on ne la change pas nous-mêmes : une modale ouverte affiche --surface (gris)
+// jusqu'en bas de cette même zone, d'où le contraste visible "barre noire" entre
+// les deux. On fait suivre le theme-color sur --surface pendant qu'une modale est
+// ouverte, et on le remet sur --bg une fois toutes les modales refermées.
+const THEME_COLOR_BG = '#0B0D10';      // = --bg
+const THEME_COLOR_SURFACE = '#15181D'; // = --surface
+const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+function setThemeColor(hex){
+  if(themeColorMeta) themeColorMeta.setAttribute('content', hex);
+}
+
 function openModal(id){
   $(id).classList.add('active');
   openModalCount++;
-  if(openModalCount===1) lockBodyScroll();
+  if(openModalCount===1){ lockBodyScroll(); setThemeColor(THEME_COLOR_SURFACE); }
 }
 function closeModal(id){
   $(id).classList.remove('active');
   openModalCount = Math.max(0, openModalCount-1);
-  if(openModalCount===0) unlockBodyScroll();
+  if(openModalCount===0){ unlockBodyScroll(); setThemeColor(THEME_COLOR_BG); }
 }
 document.querySelectorAll('.modal-backdrop').forEach(m=>{
   m.addEventListener('click', e=>{
@@ -1216,10 +1229,29 @@ document.querySelectorAll('.modal-backdrop').forEach(m=>{
   const MIN_DRAG = 24;           // en dessous, on ignore (évite qu'un simple tap ferme la modale)
   const DRAG_MAX = 240;          // au-delà, résistance élastique plutôt qu'un suivi 1:1 du doigt
 
-  let modalEl=null, backdropEl=null, startY=0, startTime=0, dy=0, dragging=false;
+  let modalEl=null, backdropEl=null, scrollRefEl=null, startY=0, startTime=0, dy=0, dragging=false;
 
   function activeBackdrop(){
     return document.querySelector('.modal-backdrop.active');
+  }
+
+  // Remonte du point de contact vers la modale et s'arrête sur le premier
+  // élément réellement scrollable rencontré (ex: la liste "picker-list" des
+  // aliments dans la modale d'ajout au journal, ou l'historique des pesées).
+  // Sans ça, le geste vérifiait toujours le scrollTop de la modale entière :
+  // si le doigt démarre DANS une sous-liste déjà scrollée, la modale elle-même
+  // reste à scrollTop 0, et un simple scroll vers le haut dans la sous-liste
+  // était interprété à tort comme une tentative de fermeture de la modale.
+  function closestScrollable(target, modal){
+    let el = target;
+    while(el && el !== modal.parentElement){
+      const style = getComputedStyle(el);
+      const scrollableY = (style.overflowY==='auto' || style.overflowY==='scroll') && el.scrollHeight > el.clientHeight;
+      if(scrollableY) return el;
+      if(el === modal) return modal;
+      el = el.parentElement;
+    }
+    return modal;
   }
 
   // Reprend les mêmes cas particuliers que le clic sur le fond assombri
@@ -1240,6 +1272,7 @@ document.querySelectorAll('.modal-backdrop').forEach(m=>{
     // pas de capture si le geste démarre sur un champ de saisie (évite de gêner la frappe/le curseur)
     if(e.target.closest('input, select, textarea')){ modalEl = null; return; }
     modalEl = modal;
+    scrollRefEl = closestScrollable(e.target, modal);
     startY = e.touches[0].clientY;
     startTime = Date.now();
     dy = 0;
@@ -1251,7 +1284,10 @@ document.querySelectorAll('.modal-backdrop').forEach(m=>{
     const delta = e.touches[0].clientY - startY;
 
     if(!dragging){
-      if(delta <= 4 || modalEl.scrollTop > 0) return; // pas encore assez de mouvement, ou pas en haut du contenu
+      // pas encore assez de mouvement, ou la liste/sous-liste sous le doigt
+      // n'est pas encore tout en haut de son propre contenu : on laisse le
+      // scroll natif de cet élément (modale ou sous-liste) faire son travail.
+      if(delta <= 4 || (scrollRefEl && scrollRefEl.scrollTop > 0)) return;
       dragging = true;
       modalEl.style.transition = 'none';
     }
@@ -1282,7 +1318,7 @@ document.querySelectorAll('.modal-backdrop').forEach(m=>{
         setTimeout(()=>{ el.style.transition = ''; }, 200);
       }
     }
-    modalEl = null; backdropEl = null; dragging = false; dy = 0;
+    modalEl = null; backdropEl = null; scrollRefEl = null; dragging = false; dy = 0;
   }
 
   document.addEventListener('touchstart', onStart, {passive:true});
