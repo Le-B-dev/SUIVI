@@ -77,6 +77,10 @@
   }
   header.top .day{font-size:12px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.08em;}
   header.top h1{font-size:19px; margin:1px 0 0; font-weight:600;}
+  header.top .current-tab-label{
+    font-size:14px; color:var(--prot); text-transform:uppercase; letter-spacing:0.08em;
+    flex-shrink:0; padding-left:12px; text-align:right; font-weight:600;
+  }
   main{padding:0 20px; max-width:520px; margin:0 auto;}
   .screen{display:none; animation:fade .25s ease;}
   .screen.active{display:block;}
@@ -335,6 +339,7 @@
       <div class="day" id="todayLabel">—</div>
       <h1 id="greeting">Salut</h1>
     </div>
+    <div class="current-tab-label" id="currentTabLabel"></div>
   </header>
 
   <main>
@@ -349,9 +354,9 @@
       <div id="weightModeBadge" style="font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px; text-align:center;"></div>
       <div class="weight-stats-grid" id="weightStatsGrid" style="margin-bottom:6px;">
         <div class="wstat"><div class="l">Actuel</div><div class="v" id="wCurrent">—</div></div>
+        <div class="wstat"><div class="l" id="wLostLabel">Tendance</div><div class="v" id="wLost">—</div><div class="sub" id="wLostSince"></div></div>
         <div class="wstat"><div class="l">Objectif</div><div class="v" id="wGoalDisplay">90 kg</div></div>
         <div class="wstat" id="wRemainingBox"><div class="l">Restant</div><div class="v" id="wRemaining">—</div></div>
-        <div class="wstat"><div class="l" id="wLostLabel">Tendance</div><div class="v" id="wLost">—</div><div class="sub" id="wLostSince"></div></div>
       </div>
       <div id="weightStartLabel" class="mono" style="font-size:12px; color:var(--prot); text-align:center; margin-bottom:8px; display:none;"></div>
       <svg id="weightSvg" width="100%" height="118" viewBox="0 0 480 140" preserveAspectRatio="none"></svg>
@@ -404,7 +409,7 @@
           <label>Sexe</label>
           <select id="pSexe"><option value="H">Homme</option><option value="F">Femme</option></select>
         </div>
-        <div class="field"><label>Âge</label><input type="number" id="pAge" placeholder="ex: 30"></div>
+        <div class="field"><label>Date de naissance</label><input type="date" id="pBirthdate"></div>
       </div>
       <div class="row2">
         <div class="field"><label>Taille (cm)</label><input type="number" id="pTaille" placeholder="ex: 178"></div>
@@ -465,6 +470,11 @@
       </div>
     </div>
 
+  </section>
+
+
+  <!-- REGLAGES -->
+  <section class="screen" id="screen-reglages">
     <div class="goal-card goal-card-compact">
       <h3>Sauvegarde</h3>
       <div style="font-size:12px; color:var(--text-dim); line-height:1.5; margin-bottom:10px;">
@@ -477,7 +487,7 @@
     </div>
 
     <div class="goal-card goal-card-compact">
-      <h3>Zone dangereuse</h3>
+      <h3>Réinitialisation ⚠️</h3>
       <div style="font-size:12px; color:var(--text-dim); line-height:1.5; margin-bottom:10px;">
         Supprime définitivement tout ce qui est enregistré sur cet appareil : aliments, journal, pesées et profil. L'app repart à zéro, comme à la toute première ouverture.
       </div>
@@ -486,7 +496,6 @@
 
     <div style="text-align:center; font-size:11px; color:var(--text-faint); margin:18px 0 4px;" id="appBuildBadge"></div>
   </section>
-
 
   </main>
 </div>
@@ -509,6 +518,10 @@
     <button class="tab-btn" data-screen="profil">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c1.5-4 5-6 8-6s6.5 2 8 6"/></svg>
       Profil
+    </button>
+    <button class="tab-btn" data-screen="reglages">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Réglages
     </button>
   </nav>
 </div>
@@ -671,8 +684,11 @@
     <button class="modal-close" onclick="closeModal('modalConfirm')">×</button>
     <h2 id="confirmTitle">Confirmer</h2>
     <div id="confirmMessage" style="font-size:14px; color:var(--text-dim); margin-bottom:18px;"></div>
-    <button class="btn btn-primary" id="confirmActionBtn" style="background:var(--danger); color:#fff;">Supprimer</button>
-    <button class="btn btn-ghost" style="margin-top:10px;" onclick="closeModal('modalConfirm')">Annuler</button>
+    <div style="display:flex; flex-direction:column; gap:10px;">
+      <button class="btn btn-secondary" id="confirmExtraBtn" style="display:none;"></button>
+      <button class="btn btn-primary" id="confirmActionBtn" style="background:var(--danger); color:#fff;">Supprimer</button>
+      <button class="btn btn-ghost" onclick="closeModal('modalConfirm')">Annuler</button>
+    </div>
   </div>
 </div>
 
@@ -732,11 +748,26 @@ function withNameLower(p){ p.nameLower = p.name.toLowerCase(); return p; }
 // attend que l'utilisateur remplisse lui-même ses informations.
 const DEFAULT_SETTINGS = {
   calGoal:'', protGoal:'', lipGoal:'', glucGoal:'', weightGoal:'',
-  sexe:'', age:'', taille:'', muscu:'', activite:'', deficit:'',
+  sexe:'', birthdate:'', taille:'', muscu:'', activite:'', deficit:'',
   objectifType:'perte'
 };
 let settings = Object.assign({}, DEFAULT_SETTINGS);
 let currentTab = 'journal';
+
+// Calcule l'âge en années révolues à partir d'une date de naissance (YYYY-MM-DD),
+// en tenant compte du jour/mois actuel (pas une simple différence d'années brute).
+// Retourne null si aucune date de naissance n'est renseignée/valide.
+function computeAge(birthdateStr){
+  if(!birthdateStr) return null;
+  const b = new Date(birthdateStr+'T00:00:00');
+  if(isNaN(b.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - b.getFullYear();
+  const hasHadBirthdayThisYear = (now.getMonth() > b.getMonth())
+    || (now.getMonth()===b.getMonth() && now.getDate() >= b.getDate());
+  if(!hasHadBirthdayThisYear) age--;
+  return age;
+}
 
 // BUG FIX : toISOString() convertit en UTC. La France étant en avance sur UTC
 // (+1h hiver / +2h été), tôt le matin (ex: minuit-2h en été) l'heure UTC est
@@ -906,22 +937,28 @@ $('importDataInput').addEventListener('change', async e=>{
 // pesées, réglages, noms de jours) et redémarre proprement, comme à la toute
 // première ouverture — utile après avoir retiré les données de démo du code,
 // pour purger ce qui avait déjà été sauvegardé avant ce changement.
+async function doResetApp(){
+  for(const key of ['products','logs','weights','settings','dayNames']){
+    localStorage.removeItem(key);
+  }
+  location.reload();
+}
 function resetApp(){
   askConfirm({
     title: "Réinitialiser l'app ?",
-    message: "Tout ce qui est enregistré sur cet appareil (aliments, journal, pesées, profil) sera définitivement supprimé. Pense à exporter une sauvegarde avant si tu n'es pas sûr.",
+    message: "Tout ce qui est enregistré sur cet appareil (aliments, journal, pesées, profil) sera définitivement supprimé.",
     actionLabel: 'Tout supprimer',
-    onConfirm: async ()=>{
-      for(const key of ['products','logs','weights','settings','dayNames']){
-        localStorage.removeItem(key);
-      }
-      location.reload();
+    onConfirm: doResetApp,
+    extraLabel: 'Exporter une sauvegarde, puis supprimer',
+    onExtra: async ()=>{
+      await exportData();
+      await doResetApp();
     }
   });
 }
 
 /* ---------- tabs ---------- */
-const TAB_ORDER = ['journal','repas','aliments','profil'];
+const TAB_ORDER = ['journal','repas','aliments','profil','reglages'];
 const SLIDE_MS = 260; // durée de la transition de glissement entre onglets
 
 // Met à jour l'état de l'app pour un onglet donné (nav active, add-bar, sauvegarde
@@ -932,6 +969,8 @@ const SLIDE_MS = 260; // durée de la transition de glissement entre onglets
 // sur tout le document à chaque changement d'onglet (donc à chaque tap ou swipe).
 const TAB_BTNS = document.querySelectorAll('.tab-btn');
 const SCREEN_ELS = document.querySelectorAll('.screen');
+const TAB_LABELS = { journal:'Journal', repas:'Repas', aliments:'Aliments', profil:'Profil', reglages:'Réglages' };
+$('currentTabLabel').textContent = TAB_LABELS[currentTab] || '';
 
 async function applyTabState(screen){
   const leavingProfil = currentTab === 'profil' && screen !== 'profil';
@@ -940,6 +979,7 @@ async function applyTabState(screen){
   SCREEN_ELS.forEach(s=>s.classList.remove('active'));
   currentTab = screen;
   $('screen-'+currentTab).classList.add('active');
+  $('currentTabLabel').textContent = TAB_LABELS[currentTab] || '';
   const addBar = $('addBarBtn');
   if(currentTab==='journal'){
     addBar.style.display = 'block';
@@ -2067,7 +2107,7 @@ function confirmDeleteProduct(id){
 }
 
 // Modale de confirmation générique, réutilisable pour toute action destructive.
-function askConfirm({ title, message, actionLabel, onConfirm }){
+function askConfirm({ title, message, actionLabel, onConfirm, extraLabel, onExtra }){
   $('confirmTitle').textContent = title || 'Confirmer';
   $('confirmMessage').textContent = message || '';
   const btn = $('confirmActionBtn');
@@ -2076,6 +2116,18 @@ function askConfirm({ title, message, actionLabel, onConfirm }){
     closeModal('modalConfirm');
     await onConfirm();
   };
+  const extraBtn = $('confirmExtraBtn');
+  if(extraLabel && onExtra){
+    extraBtn.textContent = extraLabel;
+    extraBtn.style.display = '';
+    extraBtn.onclick = async ()=>{
+      closeModal('modalConfirm');
+      await onExtra();
+    };
+  } else {
+    extraBtn.style.display = 'none';
+    extraBtn.onclick = null;
+  }
   openModal('modalConfirm');
 }
 
@@ -2405,11 +2457,8 @@ function renderPoids(){
     if(sorted.length>=2){
       const lost = sorted[0].weight - sorted[sorted.length-1].weight;
       setStatValue('wLost', (lost>=0?'-':'+')+Math.abs(lost).toFixed(1));
-      const firstDateLabel = new Date(sorted[0].date+'T00:00:00').toLocaleDateString('fr-FR',{day:'2-digit', month:'short'});
-      $('wLostSince').textContent = 'depuis '+firstDateLabel;
     } else {
       setStatValue('wLost', null);
-      $('wLostSince').textContent = '';
     }
   } else {
     $('wLostLabel').textContent = 'Écart';
@@ -2419,14 +2468,15 @@ function renderPoids(){
     } else {
       setStatValue('wLost', null);
     }
-    $('wLostSince').textContent = '';
   }
 
   // Poids de départ (première pesée enregistrée), affiché juste sous les
-  // cases de stats, dans la même couleur que la courbe.
+  // cases de stats, dans la même couleur que la courbe. Uniquement en objectif
+  // "Perte de poids" : en maintien, l'idée de "point de départ" n'a pas de sens.
   const startLabel = $('weightStartLabel');
-  if(sorted.length>0){
-    startLabel.textContent = `Poids de départ : ${sorted[0].weight.toFixed(1)} kg`;
+  if(isPerte && sorted.length>0){
+    const firstDateLabel = new Date(sorted[0].date+'T00:00:00').toLocaleDateString('fr-FR',{day:'2-digit', month:'2-digit', year:'numeric'});
+    startLabel.textContent = `Poids de départ : ${sorted[0].weight.toFixed(1)} kg · ${firstDateLabel}`;
     startLabel.style.display = '';
   } else {
     startLabel.style.display = 'none';
@@ -2521,7 +2571,7 @@ function computeTDEE(profile){
   const poids = isMaintien
     ? (profile.weightGoal || getCurrentWeight() || fallback)
     : (getCurrentWeight() || profile.weightGoal || fallback);
-  const bmr = bmrOf(poids, profile.taille, profile.age, profile.sexe);
+  const bmr = bmrOf(poids, profile.taille, computeAge(profile.birthdate), profile.sexe);
   const tdee = bmr * (ACTIVITY_MULT[profile.activite] || 1.375);
   return { poids, bmr, tdee, isMaintien };
 }
@@ -2563,7 +2613,7 @@ function readDraftProfile(){
   const deficitRaw = $('pDeficit').value;
   return {
     sexe: $('pSexe').value,
-    age: parseFloat($('pAge').value) || settings.age,
+    birthdate: $('pBirthdate').value || settings.birthdate,
     taille: parseFloat($('pTaille').value) || settings.taille,
     muscu: $('pMuscu').value,
     activite: $('pActivite').value,
@@ -2576,13 +2626,13 @@ function readDraftProfile(){
 }
 
 function renderSuggestionBox(s){
-  // Tant que le strict minimum (sexe/âge/taille/activité) n'est pas renseigné,
-  // le calcul (BMR/TDEE) n'a pas de sens (il tournerait sur des valeurs vides) :
-  // on invite simplement à remplir le profil plutôt que d'afficher une estimation
-  // fantaisiste comme "environ 7 kcal".
-  const profileIncomplete = !s.sexe || !s.age || !s.taille || !s.activite;
+  // Tant que le strict minimum (sexe/date de naissance/taille/activité) n'est
+  // pas renseigné, le calcul (BMR/TDEE) n'a pas de sens (il tournerait sur des
+  // valeurs vides) : on invite simplement à remplir le profil plutôt que
+  // d'afficher une estimation fantaisiste comme "environ 7 kcal".
+  const profileIncomplete = !s.sexe || !s.birthdate || !s.taille || !s.activite;
   if(profileIncomplete){
-    $('profilSuggestion').textContent = "Remplis ton sexe, ton âge, ta taille et ton niveau d'activité ci-dessus pour voir une suggestion personnalisée.";
+    $('profilSuggestion').textContent = "Remplis ton sexe, ta date de naissance, ta taille et ton niveau d'activité ci-dessus pour voir une suggestion personnalisée.";
     $('deficitWeeklyLoss').textContent = '';
     $('suggestionGrid').innerHTML = '';
     $('useRecommendedDeficitBtn').style.display = 'none';
@@ -2637,7 +2687,7 @@ function renderSuggestionBox(s){
 
 function renderProfil(){
   $('pSexe').value = settings.sexe;
-  $('pAge').value = settings.age;
+  $('pBirthdate').value = settings.birthdate;
   $('pTaille').value = settings.taille;
   $('pMuscu').value = settings.muscu;
   $('pActivite').value = settings.activite;
@@ -2706,7 +2756,7 @@ function scheduleProfileAutosave(){
 
 async function saveProfileSilently(){
   settings.sexe = $('pSexe').value;
-  settings.age = parseFloat($('pAge').value)||DEFAULT_SETTINGS.age;
+  settings.birthdate = $('pBirthdate').value || DEFAULT_SETTINGS.birthdate;
   settings.taille = parseFloat($('pTaille').value)||DEFAULT_SETTINGS.taille;
   settings.muscu = $('pMuscu').value;
   settings.activite = $('pActivite').value;
@@ -2727,7 +2777,7 @@ async function saveProfileSilently(){
 // la carte "Suggestion de l'app", le déficit/calories calculés, et planifie
 // la sauvegarde. Avant, ces 3 effets étaient câblés séparément (4 boucles
 // forEach différentes sur les mêmes champs, à des endroits différents du fichier).
-const PROFILE_FIELD_IDS = ['pSexe','pAge','pTaille','pMuscu','pActivite','pPoidsObjectif','pDeficit'];
+const PROFILE_FIELD_IDS = ['pSexe','pBirthdate','pTaille','pMuscu','pActivite','pPoidsObjectif','pDeficit'];
 function onProfileFieldChange(){
   const draft = readDraftProfile();
   renderSuggestionBox(draft);
