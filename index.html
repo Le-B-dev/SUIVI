@@ -8,6 +8,38 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Suivi">
 <meta name="theme-color" content="#0B0D10">
+<!-- Décourage la mise en cache agressive de la page elle-même par le navigateur
+     (surtout utile pour les PWA ajoutées à l'écran d'accueil sur iOS, qui gardent
+     sinon volontiers une vieille version en cache après un simple remplacement
+     du fichier côté serveur). N'empêche pas 100% des caches (WebKit standalone
+     peut encore résister), mais réduit nettement le risque. -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<script>
+/* Vérif de version + rechargement forcé : les balises meta anti-cache ci-dessus
+   ne suffisent pas toujours sur une PWA iOS ajoutée à l'écran d'accueil (le
+   conteneur WKWebView peut garder une ancienne version en mémoire même après un
+   remplacement du fichier). Ce script tourne AVANT tout le reste de la page : si
+   la version stockée localement diffère de celle-ci, on force une vraie requête
+   réseau (URL différente = jamais servie depuis un cache) avant même d'afficher
+   quoi que ce soit. Ne touche jamais aux données de l'app (localStorage des
+   aliments/poids), seule une petite clé de version y est lue/écrite.
+   -> Penser à changer APP_VERSION à chaque mise à jour du fichier. */
+(function(){
+  var APP_VERSION = '2026-08-13.1';
+  try{
+    var stored = localStorage.getItem('appVersion');
+    if(stored !== APP_VERSION){
+      localStorage.setItem('appVersion', APP_VERSION);
+      if(stored !== null){
+        var url = location.pathname + '?v=' + encodeURIComponent(APP_VERSION) + location.hash;
+        location.replace(url);
+      }
+    }
+  }catch(e){}
+})();
+</script>
 <title>Suivi</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -432,6 +464,8 @@
       </div>
       <button class="btn" style="background:var(--danger); color:#fff;" onclick="resetApp()">Réinitialiser l'app (tout supprimer)</button>
     </div>
+
+    <div style="text-align:center; font-size:11px; color:var(--text-faint); margin:18px 0 4px;" id="appBuildBadge"></div>
   </section>
 
 
@@ -608,6 +642,7 @@
                font-size:16px; align-items:center; justify-content:center; cursor:pointer;">💡</button>
     </div>
     <div class="off-status" id="scannerStatus" style="margin-top:10px;"></div>
+    <div style="font-size:10px; opacity:.35; text-align:center; margin-top:4px;">build scanner : <span id="scannerBuildTag"></span></div>
   </div>
 </div>
 
@@ -1654,7 +1689,16 @@ async function startBackCamera(scanConfig){
   throw new Error("Aucune caméra arrière détectée sur cet appareil");
 }
 
+// Repère de version du scanner : à incrémenter à chaque modification de cette
+// section. Affiché dans le modal + loggué en console pour vérifier rapidement,
+// notamment sur iPhone où l'icône d'écran d'accueil garde parfois une copie en
+// cache après remplacement du fichier, qu'il faut alors distinguer d'un vrai bug.
+const SCANNER_BUILD = 'back-cam-force-2026-08-13a';
+
 async function openBarcodeScanner(context){
+  console.log('[Scanner build]', SCANNER_BUILD);
+  const buildTag = document.getElementById('scannerBuildTag');
+  if(buildTag) buildTag.textContent = SCANNER_BUILD;
   scanContext = context || 'product';
   const status = $('scannerStatus');
   scanLocked = false;
@@ -2544,8 +2588,19 @@ function render(){
   if(currentTab==='profil') renderProfil();
 }
 
+/* ---------- version de build ----------
+   Sert uniquement à vérifier, en cas de doute (surtout sur une PWA ajoutée à
+   l'écran d'accueil, qui aime bien garder une vieille version en cache), que
+   c'est bien la dernière version du fichier qui tourne réellement. Visible en
+   bas de l'onglet Profil et dans la console. À changer à chaque nouvelle
+   version envoyée pendant le débogage. */
+const APP_BUILD = '2026-08-12-scanner-force-back-cam';
+
 /* ---------- init ---------- */
 (async function init(){
+  console.log('[Suivi] build:', APP_BUILD);
+  const badge = $('appBuildBadge');
+  if(badge) badge.textContent = 'Version : ' + APP_BUILD;
   // Demande au navigateur de ne jamais purger automatiquement le stockage de
   // cette app sous pression mémoire/espace disque (n'a pas d'effet sur les cas
   // où l'icône est supprimée/réinstallée ou où l'historique Safari est effacé —
