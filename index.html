@@ -190,31 +190,31 @@
   /* modal */
   .modal-backdrop{
     position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:50;
-    display:flex; align-items:flex-end; justify-content:center;
-    /* Invisible et non cliquable par défaut, mais toujours en display:flex (pas
-       display:none) : display ne peut pas être transitionné en CSS, alors que
-       opacity/transform le peuvent, ce qui permet un fondu + glissement fluides
-       à l'ouverture ET à la fermeture au lieu d'un basculement instantané. */
-    opacity:0; visibility:hidden; pointer-events:none;
-    transition:opacity .28s ease, visibility 0s linear .28s;
+    display:none; align-items:flex-end; justify-content:center;
+    opacity:0;
   }
-  .modal-backdrop.active{
-    opacity:1; visibility:visible; pointer-events:auto;
-    transition:opacity .28s ease, visibility 0s linear 0s;
+  .modal-backdrop.active{ display:flex; }
+  /* .open est ajoutée par JS un cycle de rendu après .active (voir openModal) :
+     sans ce délai, le navigateur applique directement l'état final sans jouer
+     la transition, car l'élément passerait de display:none à sa forme finale
+     en un seul rendu. La transition n'existe QUE sur .open : fermer une modale
+     (retrait de .active/.open) redevient instantané, comme avant. */
+  .modal-backdrop.open{
+    opacity:1;
+    transition:opacity .42s cubic-bezier(.16,1,.3,1);
   }
   .modal{
     background:var(--surface); border-radius:20px 20px 0 0; border:1px solid var(--border); border-bottom:none;
     width:100%; max-width:520px; padding:16px 20px calc(20px + env(safe-area-inset-bottom));
     max-height:85vh; overflow-y:auto;
-    /* Panneau qui glisse depuis le bas + fondu, synchronisé avec le fondu du
-       fond ci-dessus. Le geste de fermeture par glissement (JS) pose un
-       transform inline le temps du drag, qui prend naturellement le pas sur
-       cette valeur CSS tant qu'il est présent, sans conflit entre les deux. */
-    transform:translateY(28px); opacity:0;
-    transition:transform .3s cubic-bezier(.22,1,.36,1), opacity .24s ease;
+    transform:translateY(48px); opacity:0;
+    /* Le geste de fermeture par glissement (JS) pose un transform inline le
+       temps du drag, qui prend naturellement le pas sur cette valeur CSS tant
+       qu'il est présent, sans conflit entre les deux. */
   }
-  .modal-backdrop.active .modal{
+  .modal-backdrop.open .modal{
     transform:translateY(0); opacity:1;
+    transition:transform .5s cubic-bezier(.16,1,.3,1), opacity .4s ease .04s;
   }
   .modal h2{margin:0 0 12px; font-size:17px;}
   .modal-close{float:right; background:none; border:none; color:var(--text-faint); font-size:22px; cursor:pointer;}
@@ -345,16 +345,17 @@
       <span>Poids</span>
       <button class="mini-btn" onclick="openWeightModal()">+ Pesée</button>
     </div>
-    <div class="weight-chart" id="weightChartCard" onclick="openWeightHistory()" style="cursor:pointer;">
-      <div id="weightModeBadge" style="font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px; text-align:center;"></div>
-      <div class="weight-stats-grid" id="weightStatsGrid" style="margin-bottom:16px;">
+    <div class="weight-chart" id="weightChartCard" onclick="openWeightHistory()" style="cursor:pointer; padding:12px;">
+      <div id="weightModeBadge" style="font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px; text-align:center;"></div>
+      <div class="weight-stats-grid" id="weightStatsGrid" style="margin-bottom:6px;">
         <div class="wstat"><div class="l">Actuel</div><div class="v" id="wCurrent">—</div></div>
         <div class="wstat"><div class="l">Objectif</div><div class="v" id="wGoalDisplay">90 kg</div></div>
         <div class="wstat" id="wRemainingBox"><div class="l">Restant</div><div class="v" id="wRemaining">—</div></div>
         <div class="wstat"><div class="l" id="wLostLabel">Tendance</div><div class="v" id="wLost">—</div><div class="sub" id="wLostSince"></div></div>
       </div>
-      <svg id="weightSvg" width="100%" height="140" viewBox="0 0 480 140" preserveAspectRatio="none"></svg>
-      <div class="chart-hint">Voir l'historique des pesées ›</div>
+      <div id="weightStartLabel" class="mono" style="font-size:12px; color:var(--prot); text-align:center; margin-bottom:8px; display:none;"></div>
+      <svg id="weightSvg" width="100%" height="118" viewBox="0 0 480 140" preserveAspectRatio="none"></svg>
+      <div class="chart-hint" style="margin-top:4px;">Voir l'historique des pesées ›</div>
     </div>
 
     <div class="section-title">Aujourd'hui</div>
@@ -1210,12 +1211,22 @@ function setThemeColor(hex){
 }
 
 function openModal(id){
-  $(id).classList.add('active');
+  const el = $(id);
+  el.classList.add('active');
   openModalCount++;
   if(openModalCount===1){ lockBodyScroll(); setThemeColor(THEME_COLOR_SURFACE); }
+  // Un cycle de rendu doit s'écouler entre l'ajout de .active (display:none -> flex)
+  // et celui de .open (déclencheur de la transition), sinon le navigateur applique
+  // directement l'état final sans jouer l'animation d'ouverture.
+  requestAnimationFrame(()=>{
+    requestAnimationFrame(()=>{ el.classList.add('open'); });
+  });
 }
 function closeModal(id){
-  $(id).classList.remove('active');
+  const el = $(id);
+  // .active ET .open retirées dans le même appel : aucune transition n'est
+  // déclarée sur leur retrait (voir CSS), donc la fermeture reste instantanée.
+  el.classList.remove('active', 'open');
   openModalCount = Math.max(0, openModalCount-1);
   if(openModalCount===0){ unlockBodyScroll(); setThemeColor(THEME_COLOR_BG); }
 }
@@ -2409,6 +2420,16 @@ function renderPoids(){
       setStatValue('wLost', null);
     }
     $('wLostSince').textContent = '';
+  }
+
+  // Poids de départ (première pesée enregistrée), affiché juste sous les
+  // cases de stats, dans la même couleur que la courbe.
+  const startLabel = $('weightStartLabel');
+  if(sorted.length>0){
+    startLabel.textContent = `Poids de départ : ${sorted[0].weight.toFixed(1)} kg`;
+    startLabel.style.display = '';
+  } else {
+    startLabel.style.display = 'none';
   }
 
   // chart
