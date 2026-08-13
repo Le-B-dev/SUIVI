@@ -613,6 +613,12 @@
     <div class="field"><label>Poids (kg)</label><input type="number" step="0.1" id="weightInput"></div>
     <button class="btn btn-primary" onclick="addWeight()">Enregistrer</button>
     <button class="btn btn-ghost" id="deleteWeightBtn" style="margin-top:10px; display:none;" onclick="deleteWeightFromModal()">Supprimer cette pesée</button>
+    <div id="weightModalImportPrompt" style="display:none; text-align:center; margin-top:16px; padding-top:14px; border-top:1px solid var(--border);">
+      <div style="font-size:12px; color:var(--text-dim); margin-bottom:8px;">Tu as déjà utilisé l'app avant ?</div>
+      <button type="button" class="btn btn-ghost" onclick="$('onboardingImportInput').click()">Importer une sauvegarde</button>
+      <input type="file" id="onboardingImportInput" accept="application/json" style="display:none;">
+      <div class="off-status" id="onboardingImportStatus" style="margin-top:8px;"></div>
+    </div>
   </div>
 </div>
 
@@ -843,6 +849,24 @@ function unlockOnboarding(){
   TAB_BTNS.forEach(b=>b.classList.remove('tab-locked'));
 }
 
+// Détermine et déclenche la prochaine étape d'onboarding nécessaire (poids,
+// puis fiche "Toi", sinon déverrouille l'app). Ne s'occupe pas du rendu :
+// les appelants font leur propre render() si besoin. Réutilisée par init()
+// et par l'import de sauvegarde proposé dès la première ouverture (une
+// sauvegarde restaurée peut déjà satisfaire une, plusieurs, ou aucune des
+// étapes, selon ce qu'elle contient).
+function proceedOnboardingStep(){
+  if(!hasWeighIn()){
+    lockOnboarding();
+    openMandatoryWeightModal();
+  } else if(!isProfileComplete()){
+    lockOnboarding();
+    openOnboardingProfileModal();
+  } else {
+    unlockOnboarding();
+  }
+}
+
 // Calcule l'âge en années révolues à partir d'une date de naissance (YYYY-MM-DD),
 // en tenant compte du jour/mois actuel (pas une simple différence d'années brute).
 // Retourne null si aucune date de naissance n'est renseignée/valide.
@@ -993,6 +1017,33 @@ async function exportData(){
   showToast('Sauvegarde exportée');
 }
 
+// Restaure toutes les données de l'app à partir d'un fichier de sauvegarde
+// .json (même format que celui produit par exportData). Retourne true si la
+// restauration a réussi, false si le fichier est invalide. Ne demande aucune
+// confirmation elle-même : c'est aux appelants de décider si c'est nécessaire
+// (utile pour l'import proposé à la première ouverture, où il n'y a encore
+// rien à perdre, contrairement à l'import normal depuis Réglages).
+async function restoreBackupFromFile(file){
+  try{
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if(!data || typeof data!=='object' || !Array.isArray(data.products)){
+      throw new Error('format de fichier invalide');
+    }
+    products = data.products.map(withNameLower);
+    reindexProducts();
+    logs = data.logs || {};
+    weights = data.weights || [];
+    settings = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
+    dayNames = data.dayNames || {};
+    await Promise.all([saveProducts(), saveLogs(), saveWeights(), saveSettings(), saveDayNames()]);
+    return true;
+  }catch(err){
+    console.error('restoreBackupFromFile error', err);
+    return false;
+  }
+}
+
 $('importDataInput').addEventListener('change', async e=>{
   const file = e.target.files && e.target.files[0];
   e.target.value = ''; // permet de réimporter le même fichier une 2e fois si besoin
@@ -1003,32 +1054,46 @@ $('importDataInput').addEventListener('change', async e=>{
     message: `Toutes les données actuelles de l'app (aliments, journal, pesées, profil) seront remplacées par le contenu de « ${file.name} ». Cette action est irréversible.`,
     actionLabel: 'Importer et remplacer',
     onConfirm: async ()=>{
-      try{
-        const text = await file.text();
-        const data = JSON.parse(text);
-        if(!data || typeof data!=='object' || !Array.isArray(data.products)){
-          throw new Error('format de fichier invalide');
-        }
-        products = data.products.map(withNameLower);
-        reindexProducts();
-        logs = data.logs || {};
-        weights = data.weights || [];
-        settings = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
-        dayNames = data.dayNames || {};
-        await Promise.all([saveProducts(), saveLogs(), saveWeights(), saveSettings(), saveDayNames()]);
+      const ok = await restoreBackupFromFile(file);
+      if(ok){
         if(hasWeighIn() && isProfileComplete()){
           unlockOnboarding();
         }
         render();
         status.textContent = '';
         showToast('Sauvegarde importée');
-      }catch(err){
-        console.error('importData error', err);
+      } else {
         status.textContent = "Ce fichier ne semble pas être une sauvegarde valide de l'app.";
         status.className = 'off-status err';
       }
     }
   });
+});
+
+// Import proposé dès la modale de pesée obligatoire (première ouverture) :
+// permet de restaurer directement une ancienne sauvegarde plutôt que de
+// repasser par tout l'onboarding, sans confirmation puisqu'il n'y a encore
+// rien d'enregistré sur l'appareil à ce stade.
+$('onboardingImportInput').addEventListener('change', async e=>{
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if(!file) return;
+  const status = $('onboardingImportStatus');
+  status.textContent = 'Import en cours...';
+  status.className = 'off-status loading';
+  const ok = await restoreBackupFromFile(file);
+  if(ok){
+    weightModalMandatory = false;
+    const closeBtn = document.querySelector('#modalWeight .modal-close');
+    if(closeBtn) closeBtn.style.display = '';
+    closeModal('modalWeight');
+    showToast('Sauvegarde importée');
+    render();
+    proceedOnboardingStep();
+  } else {
+    status.textContent = "Ce fichier ne semble pas être une sauvegarde valide de l'app.";
+    status.className = 'off-status err';
+  }
 });
 
 // Efface tout ce que l'app a enregistré sur cet appareil (aliments, journal,
@@ -1047,15 +1112,11 @@ function resetApp(){
     message: "Tout ce qui est enregistré sur cet appareil (aliments, journal, pesées, profil) sera définitivement supprimé.",
     actionLabel: 'Tout supprimer',
     onConfirm: doResetApp,
-    extraLabel: 'Exporter une sauvegarde, puis supprimer',
-    onExtra: async ()=>{
-      await exportData();
-      // Laisse le temps au téléchargement de réellement se terminer côté iOS
-      // avant de supprimer les données et recharger la page (voir le
-      // commentaire dans exportData sur la révocation différée de l'URL).
-      await wait(1200);
-      await doResetApp();
-    }
+    // Exactement la même action que le bouton "Exporter mes données" de
+    // Réglages (même fonction) : n'enchaîne plus sur la suppression, c'est
+    // un export à part entière, indépendant du reste de cette confirmation.
+    extraLabel: 'Exporter une sauvegarde',
+    onExtra: exportData
   });
 }
 
@@ -2459,6 +2520,7 @@ function openWeightModal(forceMorning, fromHistory){
   weightModalMandatory = false;
   const closeBtn = document.querySelector('#modalWeight .modal-close');
   if(closeBtn) closeBtn.style.display = '';
+  $('weightModalImportPrompt').style.display = 'none';
   weightModalReturnToHistory = !!fromHistory;
   editingWeightDate = null;
   if(fromHistory) closeModal('modalWeightHistory');
@@ -2485,6 +2547,7 @@ function editWeight(date){
   weightModalMandatory = false;
   const closeBtn = document.querySelector('#modalWeight .modal-close');
   if(closeBtn) closeBtn.style.display = '';
+  $('weightModalImportPrompt').style.display = 'none';
   editingWeightDate = date;
   weightModalReturnToHistory = true;
   closeModal('modalWeightHistory');
@@ -2512,6 +2575,9 @@ function openMandatoryWeightModal(){
   $('weightModalSub').textContent = "Avant de commencer, indique ton poids actuel.";
   const closeBtn = document.querySelector('#modalWeight .modal-close');
   if(closeBtn) closeBtn.style.display = 'none';
+  $('onboardingImportStatus').textContent = '';
+  $('onboardingImportStatus').className = 'off-status';
+  $('weightModalImportPrompt').style.display = '';
   openModal('modalWeight');
 }
 
@@ -3101,19 +3167,11 @@ const APP_BUILD = '2026-08-12-scanner-force-back-cam';
   }
   await loadAll();
   render();
-  if(!hasWeighIn()){
-    // Toute première ouverture (aucune pesée jamais enregistrée) : étape 1
-    // obligatoire avant tout le reste, via une modale non fermable. L'écran
-    // reste sur Journal en arrière-plan, jamais forcé vers un autre onglet.
-    lockOnboarding();
-    openMandatoryWeightModal();
-  } else if(!isProfileComplete()){
-    // Étape 2 : la fiche "Toi", via une modale dédiée elle aussi non fermable.
-    lockOnboarding();
-    openOnboardingProfileModal();
-  } else {
-    unlockOnboarding();
-  }
+  // L'écran reste sur Journal en arrière-plan pendant tout l'onboarding,
+  // jamais forcé vers un autre onglet : proceedOnboardingStep() se charge
+  // d'ouvrir la modale obligatoire correspondant à l'étape manquante, s'il y
+  // en a une (poids, puis fiche "Toi"), ou de déverrouiller l'app sinon.
+  proceedOnboardingStep();
   // rappel automatique de la pesée du matin si pas encore fait aujourd'hui
   // (seulement si les 2 étapes ci-dessus sont déjà passées, pour ne pas
   // superposer une modale par-dessus l'onboarding obligatoire)
