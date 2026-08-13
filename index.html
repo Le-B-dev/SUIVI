@@ -338,7 +338,7 @@
   <header class="top">
     <div>
       <div class="day" id="todayLabel">—</div>
-      <h1 id="greeting">Salut</h1>
+      <h1 id="greeting">Bonjour</h1>
     </div>
     <div class="current-tab-label" id="currentTabLabel"></div>
   </header>
@@ -479,7 +479,7 @@
       <div style="font-size:12px; color:var(--text-dim); line-height:1.5; margin-bottom:10px;">
         Toutes tes données (aliments, journal, pesées, profil) sont stockées uniquement sur cet appareil, dans ce fichier. Exporte-les régulièrement pour ne rien perdre si tu changes de téléphone ou de version de l'app.
       </div>
-      <button class="btn btn-secondary" onclick="exportData()">Exporter mes données (.json)</button>
+      <button class="btn btn-secondary" onclick="exportData()">Exporter une sauvegarde</button>
       <button class="btn btn-ghost" style="margin-top:8px;" onclick="$('importDataInput').click()">Importer une sauvegarde</button>
       <input type="file" id="importDataInput" accept="application/json" style="display:none;">
       <div class="off-status" id="backupStatus" style="margin-top:8px;"></div>
@@ -1112,7 +1112,7 @@ function resetApp(){
     message: "Tout ce qui est enregistré sur cet appareil (aliments, journal, pesées, profil) sera définitivement supprimé.",
     actionLabel: 'Tout supprimer',
     onConfirm: doResetApp,
-    // Exactement la même action que le bouton "Exporter mes données" de
+    // Exactement la même action que le bouton "Exporter une sauvegarde" de
     // Réglages (même fonction) : n'enchaîne plus sur la suppression, c'est
     // un export à part entière, indépendant du reste de cette confirmation.
     extraLabel: 'Exporter une sauvegarde',
@@ -1732,7 +1732,7 @@ function renderJournal(){
   const today = new Date();
   $('todayLabel').textContent = today.toLocaleDateString('fr-FR',{weekday:'long', day:'numeric', month:'long'});
   const hr = today.getHours();
-  $('greeting').textContent = hr<12?'Bonjour':(hr<18?'Salut':'Bonsoir');
+  $('greeting').textContent = hr<18?'Bonjour':'Bonsoir';
 
   const entries = logs[key] || [];
   const totals = sumMacros(entries);
