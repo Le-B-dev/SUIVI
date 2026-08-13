@@ -405,13 +405,11 @@
   <section class="screen" id="screen-profil">
     <div class="goal-card goal-card-compact">
       <h3>Toi</h3>
-      <div class="row2">
-        <div class="field">
-          <label>Sexe</label>
-          <select id="pSexe"><option value="H">Homme</option><option value="F">Femme</option></select>
-        </div>
-        <div class="field"><label>Date de naissance</label><input type="date" id="pBirthdate"></div>
+      <div class="field">
+        <label>Sexe</label>
+        <select id="pSexe"><option value="H">Homme</option><option value="F">Femme</option></select>
       </div>
+      <div class="field"><label>Date de naissance</label><input type="date" id="pBirthdate"></div>
       <div class="row2">
         <div class="field"><label>Taille (cm)</label><input type="number" id="pTaille" placeholder="ex: 178"></div>
         <div class="field"><label>Poids actuel</label><input type="text" id="pPoidsActuel" disabled></div>
@@ -623,13 +621,11 @@
   <div class="modal">
     <h2>Parle-moi un peu de toi 👋</h2>
     <div style="font-size:13px; color:var(--text-dim); margin:-10px 0 16px;">Ces infos servent à calculer tes besoins caloriques.</div>
-    <div class="row2">
-      <div class="field">
-        <label>Sexe</label>
-        <select id="obSexe"><option value="">—</option><option value="H">Homme</option><option value="F">Femme</option></select>
-      </div>
-      <div class="field"><label>Date de naissance</label><input type="date" id="obBirthdate"></div>
+    <div class="field">
+      <label>Sexe</label>
+      <select id="obSexe"><option value="">—</option><option value="H">Homme</option><option value="F">Femme</option></select>
     </div>
+    <div class="field"><label>Date de naissance</label><input type="date" id="obBirthdate"></div>
     <div class="field"><label>Taille (cm)</label><input type="number" id="obTaille" placeholder="ex: 178"></div>
     <div class="row2">
       <div class="field">
@@ -987,7 +983,13 @@ async function exportData(){
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
+  // Révocation différée (pas juste après le click()) : sur iOS Safari, surtout
+  // en PWA installée sur l'écran d'accueil, le téléchargement/partage du blob
+  // peut se finaliser de façon asynchrone après le click(). Révoquer l'URL
+  // trop tôt peut faire échouer l'export silencieusement — particulièrement
+  // visible quand il est immédiatement enchaîné avec une réinitialisation
+  // (voir resetApp -> onExtra, qui attend elle aussi avant de continuer).
+  setTimeout(()=>URL.revokeObjectURL(url), 3000);
   showToast('Sauvegarde exportée');
 }
 
@@ -1048,6 +1050,10 @@ function resetApp(){
     extraLabel: 'Exporter une sauvegarde, puis supprimer',
     onExtra: async ()=>{
       await exportData();
+      // Laisse le temps au téléchargement de réellement se terminer côté iOS
+      // avant de supprimer les données et recharger la page (voir le
+      // commentaire dans exportData sur la révocation différée de l'URL).
+      await wait(1200);
       await doResetApp();
     }
   });
