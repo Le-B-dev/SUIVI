@@ -164,6 +164,7 @@
   }
   nav.tabs button svg{width:20px;height:20px;}
   nav.tabs button.active{color:var(--prot);}
+  nav.tabs button.tab-locked{opacity:.35; pointer-events:none;}
 
   /* form / inputs */
   .field{margin-bottom:11px;}
@@ -617,6 +618,61 @@
   </div>
 </div>
 
+<!-- MODAL: onboarding profil (première ouverture, obligatoire) -->
+<div class="modal-backdrop" id="modalOnboardingProfile">
+  <div class="modal">
+    <h2>Parle-moi un peu de toi 👋</h2>
+    <div style="font-size:13px; color:var(--text-dim); margin:-10px 0 16px;">Ces infos servent à calculer tes besoins caloriques.</div>
+    <div class="row2">
+      <div class="field">
+        <label>Sexe</label>
+        <select id="obSexe"><option value="">—</option><option value="H">Homme</option><option value="F">Femme</option></select>
+      </div>
+      <div class="field"><label>Date de naissance</label><input type="date" id="obBirthdate"></div>
+    </div>
+    <div class="field"><label>Taille (cm)</label><input type="number" id="obTaille" placeholder="ex: 178"></div>
+    <div class="row2">
+      <div class="field">
+        <label>Tu fais de la musculation ?</label>
+        <select id="obMuscu"><option value="">—</option><option value="oui">Oui, régulièrement</option><option value="non">Non / peu</option></select>
+      </div>
+      <div class="field">
+        <label>Niveau d'activité général</label>
+        <select id="obActivite">
+          <option value="">—</option>
+          <option>Sédentaire</option>
+          <option>Légèrement actif</option>
+          <option>Modérément actif</option>
+          <option>Très actif</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label>Objectif</label>
+      <div class="segment" style="margin-bottom:0;">
+        <button type="button" class="ob-seg-btn active" data-objtype="perte">Perte de poids</button>
+        <button type="button" class="ob-seg-btn" data-objtype="maintien">Maintien du poids</button>
+      </div>
+    </div>
+    <div class="field"><label>Poids visé (kg)</label><input type="number" id="obPoidsVise" placeholder="ex: 90"></div>
+    <div class="off-status err" id="obStatus" style="margin-bottom:10px;"></div>
+    <button class="btn btn-primary" onclick="submitOnboardingProfile()">Continuer</button>
+  </div>
+</div>
+
+<!-- MODAL: onboarding suggestion (étape 3, obligatoire) -->
+<div class="modal-backdrop" id="modalOnboardingSuggestion">
+  <div class="modal">
+    <h2>Tes objectifs suggérés</h2>
+    <div id="obSuggestionText" style="font-size:13px; color:var(--text-dim); line-height:1.5; margin-bottom:12px;"></div>
+    <div class="activity-grid" id="obSuggestionGrid"></div>
+    <div style="font-size:15px; font-weight:700; color:var(--prot); text-align:center; line-height:1.5; margin-top:14px;">
+      Tu pourras à tout moment modifier tes informations personnelles ainsi que personnaliser ton déficit calorique journalier et tes calories journalières dans l'onglet PROFIL.
+    </div>
+    <button class="btn btn-primary" style="margin-top:14px;" onclick="applyOnboardingSuggestion()">Appliquer ces objectifs</button>
+  </div>
+</div>
+
 <!-- MODAL: day detail -->
 <div class="modal-backdrop" id="modalDayDetail">
   <div class="modal">
@@ -753,6 +809,43 @@ const DEFAULT_SETTINGS = {
 };
 let settings = Object.assign({}, DEFAULT_SETTINGS);
 let currentTab = 'journal';
+
+// Vrai une fois que le strict minimum de la fiche "Toi" (sexe, date de
+// naissance, taille, niveau d'activité) est renseigné. Mêmes champs que la
+// vérification déjà utilisée pour la suggestion de calories, pour rester
+// cohérent sur ce qui compte comme "profil rempli" dans toute l'app.
+function isProfileComplete(p){
+  p = p || settings;
+  return !!(p.sexe && p.birthdate && p.taille && p.activite && p.weightGoal);
+}
+
+// Vrai dès qu'au moins une pesée a été enregistrée. Étape obligatoire N°1,
+// avant même la fiche "Toi" : impossible de faire quoi que ce soit dans
+// l'app tant qu'aucun poids n'a été donné.
+function hasWeighIn(){
+  return weights.length > 0;
+}
+
+// Vrai tant que la modale "Peser" est affichée en mode obligatoire (première
+// pesée, à l'ouverture initiale de l'app) : dans ce cas, closeWeightModal()
+// et le geste de fermeture par glissement sont désactivés, seule la
+// validation d'un poids via addWeight() peut faire disparaître la modale.
+let weightModalMandatory = false;
+
+// Vrai tant que l'onboarding (poids puis fiche "Toi", chacun via une modale
+// obligatoire non fermable) n'est pas entièrement terminé. Contrairement à
+// isProfileComplete()/hasWeighIn(), ce drapeau ne revérifie pas en continu :
+// une fois débloqué au premier lancement, il le reste pour toute la session,
+// même si l'utilisateur modifie/efface un champ plus tard dans Profil.
+let onboardingLocked = true;
+function lockOnboarding(){
+  onboardingLocked = true;
+  TAB_BTNS.forEach(b=>b.classList.add('tab-locked'));
+}
+function unlockOnboarding(){
+  onboardingLocked = false;
+  TAB_BTNS.forEach(b=>b.classList.remove('tab-locked'));
+}
 
 // Calcule l'âge en années révolues à partir d'une date de naissance (YYYY-MM-DD),
 // en tenant compte du jour/mois actuel (pas une simple différence d'années brute).
@@ -921,6 +1014,9 @@ $('importDataInput').addEventListener('change', async e=>{
         settings = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
         dayNames = data.dayNames || {};
         await Promise.all([saveProducts(), saveLogs(), saveWeights(), saveSettings(), saveDayNames()]);
+        if(hasWeighIn() && isProfileComplete()){
+          unlockOnboarding();
+        }
         render();
         status.textContent = '';
         showToast('Sauvegarde importée');
@@ -1012,7 +1108,11 @@ let tabAnimating = false;
 // direction: 1 = l'onglet cible est "après" (le contenu glisse vers la gauche),
 //           -1 = l'onglet cible est "avant" (glisse vers la droite). Auto-déduit si omis.
 async function goToTab(screen, direction){
-  if(screen===currentTab || tabAnimating) return;
+  if(screen===currentTab || tabAnimating) return false;
+  if(onboardingLocked){
+    showToast('Réponds d\'abord aux questions pour continuer');
+    return false;
+  }
   if(direction===undefined){
     direction = TAB_ORDER.indexOf(screen) > TAB_ORDER.indexOf(currentTab) ? 1 : -1;
   }
@@ -1046,6 +1146,7 @@ async function goToTab(screen, direction){
       tabAnimating = false;
     }, SLIDE_MS);
   });
+  return true;
 }
 
 TAB_BTNS.forEach(btn=>{
@@ -1159,17 +1260,16 @@ TAB_BTNS.forEach(btn=>{
     }
   }
 
-  function springBackScreen(){
-    if(!activeScreenEl) return;
-    activeScreenEl.style.transition = `transform ${SLIDE_MS}ms cubic-bezier(.22,1,.36,1), opacity ${SLIDE_MS}ms ease`;
-    activeScreenEl.style.transform = 'translateX(0)';
-    activeScreenEl.style.opacity = '1';
+  function springBackScreen(el){
+    el = el || activeScreenEl;
+    if(!el) return;
+    el.style.transition = `transform ${SLIDE_MS}ms cubic-bezier(.22,1,.36,1), opacity ${SLIDE_MS}ms ease`;
+    el.style.transform = 'translateX(0)';
+    el.style.opacity = '1';
     setTimeout(()=>{
-      if(activeScreenEl){
-        activeScreenEl.style.transition = '';
-        activeScreenEl.style.transform = '';
-        activeScreenEl.style.opacity = '';
-      }
+      el.style.transition = '';
+      el.style.transform = '';
+      el.style.opacity = '';
     }, SLIDE_MS);
   }
 
@@ -1188,8 +1288,14 @@ TAB_BTNS.forEach(btn=>{
       const idx = TAB_ORDER.indexOf(currentTab);
       // glisser vers la droite (dx>0) : onglet précédent. Glisser vers la gauche : onglet suivant.
       const nextIdx = dx > 0 ? idx-1 : idx+1;
+      const draggedScreen = activeScreenEl;
       if(Math.abs(dx) >= SWIPE_THRESHOLD && nextIdx>=0 && nextIdx<TAB_ORDER.length){
-        goToTab(TAB_ORDER[nextIdx], dx>0 ? -1 : 1);
+        // goToTab peut refuser la navigation (profil incomplet) : dans ce cas
+        // elle résout à `false` sans rien animer, donc c'est ici qu'on fait
+        // revenir l'écran à sa place plutôt que de le laisser décalé.
+        goToTab(TAB_ORDER[nextIdx], dx>0 ? -1 : 1).then(proceeded=>{
+          if(!proceeded) springBackScreen(draggedScreen);
+        });
       } else {
         springBackScreen();
       }
@@ -1276,6 +1382,9 @@ document.querySelectorAll('.modal-backdrop').forEach(m=>{
     // cas particulier : la modale "Peser" peut avoir été ouverte depuis l'historique,
     // auquel cas on doit y revenir plutôt que de fermer purement et simplement.
     if(m.id==='modalWeight'){ closeWeightModal(); return; }
+    // modale d'onboarding profil : obligatoire, aucune fermeture par clic sur le fond
+    if(m.id==='modalOnboardingProfile'){ return; }
+    if(m.id==='modalOnboardingSuggestion'){ return; }
     // toujours passer par closeModal() (jamais classList directement) pour que
     // le compteur de verrouillage du scroll reste juste.
     closeModal(m.id);
@@ -1328,6 +1437,8 @@ document.querySelectorAll('.modal-backdrop').forEach(m=>{
   // revenir, et le scanner doit couper la caméra avant de se fermer.
   function dismissBackdrop(m){
     if(m.id==='modalWeight'){ closeWeightModal(); return; }
+    if(m.id==='modalOnboardingProfile'){ return; } // obligatoire, aucune fermeture par glissement
+    if(m.id==='modalOnboardingSuggestion'){ return; }
     if(m.id==='modalScanner'){ closeScanner(); return; }
     closeModal(m.id);
   }
@@ -1338,6 +1449,10 @@ document.querySelectorAll('.modal-backdrop').forEach(m=>{
     if(!backdropEl){ modalEl = null; return; }
     const modal = e.target.closest('.modal');
     if(!modal || !backdropEl.contains(modal)){ modalEl = null; return; }
+    // la pesée initiale obligatoire ne doit pas pouvoir être glissée-fermée
+    if(backdropEl.id==='modalWeight' && weightModalMandatory){ modalEl = null; return; }
+    if(backdropEl.id==='modalOnboardingProfile'){ modalEl = null; return; }
+    if(backdropEl.id==='modalOnboardingSuggestion'){ modalEl = null; return; }
     // pas de capture si le geste démarre sur un champ de saisie (évite de gêner la frappe/le curseur)
     if(e.target.closest('input, select, textarea')){ modalEl = null; return; }
     modalEl = modal;
@@ -2335,6 +2450,9 @@ let weightModalReturnToHistory = false;
 let editingWeightDate = null;
 
 function openWeightModal(forceMorning, fromHistory){
+  weightModalMandatory = false;
+  const closeBtn = document.querySelector('#modalWeight .modal-close');
+  if(closeBtn) closeBtn.style.display = '';
   weightModalReturnToHistory = !!fromHistory;
   editingWeightDate = null;
   if(fromHistory) closeModal('modalWeightHistory');
@@ -2358,6 +2476,9 @@ function openWeightModal(forceMorning, fromHistory){
 function editWeight(date){
   const w = weights.find(x=>x.date===date);
   if(!w) return;
+  weightModalMandatory = false;
+  const closeBtn = document.querySelector('#modalWeight .modal-close');
+  if(closeBtn) closeBtn.style.display = '';
   editingWeightDate = date;
   weightModalReturnToHistory = true;
   closeModal('modalWeightHistory');
@@ -2370,13 +2491,121 @@ function editWeight(date){
   openModal('modalWeight');
 }
 
+// Ouvre la modale "Peser" en mode obligatoire : ni le bouton ×, ni le clic sur
+// le fond, ni le glissement vers le bas ne peuvent la fermer (voir les gardes
+// correspondants). Seule la validation d'un poids via addWeight() en sort.
+function openMandatoryWeightModal(){
+  weightModalMandatory = true;
+  weightModalReturnToHistory = false;
+  editingWeightDate = null;
+  $('weightInput').value = '';
+  $('weightDate').value = todayKey();
+  $('weightDate').max = todayKey();
+  $('deleteWeightBtn').style.display = 'none';
+  $('weightModalTitle').textContent = 'Bonjour 👋';
+  $('weightModalSub').textContent = "Avant de commencer, indique ton poids actuel.";
+  const closeBtn = document.querySelector('#modalWeight .modal-close');
+  if(closeBtn) closeBtn.style.display = 'none';
+  openModal('modalWeight');
+}
+
 function closeWeightModal(){
+  if(weightModalMandatory) return; // pesée initiale obligatoire : impossible de fermer sans valider
   closeModal('modalWeight');
   editingWeightDate = null;
   if(weightModalReturnToHistory){
     weightModalReturnToHistory = false;
     openWeightHistory();
   }
+}
+
+// Étape 2 de l'onboarding : demande sexe/date de naissance/taille/activité
+// via une modale dédiée (pas l'onglet Profil), sans bouton fermer ni clic sur
+// le fond ni glissement pour fermer (mêmes gardes que la modale de pesée
+// obligatoire, via le id de la backdrop dans les fonctions correspondantes).
+function openOnboardingProfileModal(){
+  $('obSexe').value = settings.sexe || '';
+  $('obBirthdate').value = settings.birthdate || '';
+  $('obTaille').value = settings.taille || '';
+  $('obMuscu').value = settings.muscu || '';
+  $('obActivite').value = settings.activite || '';
+  $('obPoidsVise').value = settings.weightGoal || '';
+  document.querySelectorAll('#modalOnboardingProfile .ob-seg-btn').forEach(b=>{
+    b.classList.toggle('active', b.dataset.objtype === (settings.objectifType || 'perte'));
+  });
+  $('obStatus').textContent = '';
+  openModal('modalOnboardingProfile');
+}
+document.querySelectorAll('#modalOnboardingProfile .ob-seg-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('#modalOnboardingProfile .ob-seg-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+});
+
+async function submitOnboardingProfile(){
+  const sexe = $('obSexe').value;
+  const birthdate = $('obBirthdate').value;
+  const taille = parseFloat($('obTaille').value);
+  const muscu = $('obMuscu').value;
+  const activite = $('obActivite').value;
+  const weightGoal = parseFloat($('obPoidsVise').value);
+  const objectifType = document.querySelector('#modalOnboardingProfile .ob-seg-btn.active').dataset.objtype;
+  if(!sexe || !birthdate || !taille || !muscu || !activite || !weightGoal){
+    $('obStatus').textContent = 'Merci de remplir tous les champs.';
+    return;
+  }
+  settings.sexe = sexe;
+  settings.birthdate = birthdate;
+  settings.taille = taille;
+  settings.muscu = muscu;
+  settings.activite = activite;
+  settings.weightGoal = weightGoal;
+  settings.objectifType = objectifType;
+  await saveSettings();
+  closeModal('modalOnboardingProfile');
+  // étape 3 de l'onboarding : la suggestion de macros de l'app, à appliquer
+  openOnboardingSuggestionModal();
+  render();
+}
+
+// Étape 3 de l'onboarding : calcule et affiche la suggestion de macros de
+// l'app (même logique que la carte "Suggestion de l'app" du Profil), avec un
+// bouton pour l'appliquer directement aux objectifs journaliers.
+function openOnboardingSuggestionModal(){
+  const r = computeSuggestion(settings);
+  let text;
+  if(r.isMaintien){
+    text = `Sur la base de ton poids visé (${settings.weightGoal} kg), ta dépense estimée pour <strong style="color:var(--text)">maintenir ce poids</strong> est d'environ <strong style="color:var(--text)">${Math.round(r.tdee)} kcal</strong>. `;
+  } else {
+    text = `Ta dépense estimée est d'environ <strong style="color:var(--text)">${Math.round(r.tdee)} kcal</strong>. Pour une perte de poids raisonnable et durable, l'app te conseille un déficit d'environ ` +
+      `<strong style="color:var(--prot)">${r.recommendedDeficit} kcal/j</strong> (soit ~${(r.recommendedDeficit*7/7700).toFixed(2)} kg perdus par semaine). `;
+  }
+  text += `Les protéines sont calées ${settings.muscu==='oui' ? 'plus haut car tu fais de la musculation' : 'à un niveau modéré'} pour préserver ta masse musculaire.`;
+  $('obSuggestionText').innerHTML = text;
+  $('obSuggestionGrid').innerHTML = `
+    <div class="activity-opt sel"><span>Calories</span><span class="kcal mono">${Math.round(r.cal)}</span></div>
+    <div class="activity-opt sel"><span>Protéines</span><span class="kcal mono">${Math.round(r.prot)}g</span></div>
+    <div class="activity-opt sel"><span>Lipides</span><span class="kcal mono">${Math.round(r.lip)}g</span></div>
+    <div class="activity-opt sel"><span>Glucides</span><span class="kcal mono">${Math.round(r.gluc)}g</span></div>
+  `;
+  openModal('modalOnboardingSuggestion');
+}
+
+async function applyOnboardingSuggestion(){
+  const r = computeSuggestion(settings);
+  if(!r.isMaintien){
+    settings.deficit = r.recommendedDeficit;
+  }
+  settings.calGoal = Math.round(r.cal);
+  settings.protGoal = Math.round(r.prot);
+  settings.lipGoal = Math.round(r.lip);
+  settings.glucGoal = Math.round(r.gluc);
+  await saveSettings();
+  closeModal('modalOnboardingSuggestion');
+  unlockOnboarding();
+  showToast('Objectifs appliqués');
+  render();
 }
 
 async function addWeight(){
@@ -2389,8 +2618,25 @@ async function addWeight(){
   weights.push({date:key, weight:w});
   weights.sort((a,b)=>a.date.localeCompare(b.date));
   await saveWeights();
+  const wasMandatory = weightModalMandatory;
+  if(wasMandatory){
+    weightModalMandatory = false;
+    const closeBtn = document.querySelector('#modalWeight .modal-close');
+    if(closeBtn) closeBtn.style.display = '';
+  }
   closeWeightModal();
-  render();
+  if(wasMandatory){
+    if(!isProfileComplete()){
+      // étape 2 de l'onboarding : la fiche "Toi", via une modale dédiée
+      openOnboardingProfileModal();
+      render();
+    } else {
+      unlockOnboarding();
+      render();
+    }
+  } else {
+    render();
+  }
 }
 async function deleteWeight(date){
   weights = weights.filter(w=>w.date!==date);
@@ -2849,9 +3095,24 @@ const APP_BUILD = '2026-08-12-scanner-force-back-cam';
   }
   await loadAll();
   render();
+  if(!hasWeighIn()){
+    // Toute première ouverture (aucune pesée jamais enregistrée) : étape 1
+    // obligatoire avant tout le reste, via une modale non fermable. L'écran
+    // reste sur Journal en arrière-plan, jamais forcé vers un autre onglet.
+    lockOnboarding();
+    openMandatoryWeightModal();
+  } else if(!isProfileComplete()){
+    // Étape 2 : la fiche "Toi", via une modale dédiée elle aussi non fermable.
+    lockOnboarding();
+    openOnboardingProfileModal();
+  } else {
+    unlockOnboarding();
+  }
   // rappel automatique de la pesée du matin si pas encore fait aujourd'hui
+  // (seulement si les 2 étapes ci-dessus sont déjà passées, pour ne pas
+  // superposer une modale par-dessus l'onboarding obligatoire)
   const loggedToday = weights.some(w=>w.date===todayKey());
-  if(!loggedToday){
+  if(!loggedToday && hasWeighIn() && isProfileComplete()){
     setTimeout(()=>openWeightModal(true), 500);
   }
 })();
