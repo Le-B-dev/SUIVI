@@ -190,13 +190,31 @@
   /* modal */
   .modal-backdrop{
     position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:50;
-    display:none; align-items:flex-end; justify-content:center;
+    display:flex; align-items:flex-end; justify-content:center;
+    /* Invisible et non cliquable par défaut, mais toujours en display:flex (pas
+       display:none) : display ne peut pas être transitionné en CSS, alors que
+       opacity/transform le peuvent, ce qui permet un fondu + glissement fluides
+       à l'ouverture ET à la fermeture au lieu d'un basculement instantané. */
+    opacity:0; visibility:hidden; pointer-events:none;
+    transition:opacity .28s ease, visibility 0s linear .28s;
   }
-  .modal-backdrop.active{display:flex;}
+  .modal-backdrop.active{
+    opacity:1; visibility:visible; pointer-events:auto;
+    transition:opacity .28s ease, visibility 0s linear 0s;
+  }
   .modal{
     background:var(--surface); border-radius:20px 20px 0 0; border:1px solid var(--border); border-bottom:none;
     width:100%; max-width:520px; padding:16px 20px calc(20px + env(safe-area-inset-bottom));
     max-height:85vh; overflow-y:auto;
+    /* Panneau qui glisse depuis le bas + fondu, synchronisé avec le fondu du
+       fond ci-dessus. Le geste de fermeture par glissement (JS) pose un
+       transform inline le temps du drag, qui prend naturellement le pas sur
+       cette valeur CSS tant qu'il est présent, sans conflit entre les deux. */
+    transform:translateY(28px); opacity:0;
+    transition:transform .3s cubic-bezier(.22,1,.36,1), opacity .24s ease;
+  }
+  .modal-backdrop.active .modal{
+    transform:translateY(0); opacity:1;
   }
   .modal h2{margin:0 0 12px; font-size:17px;}
   .modal-close{float:right; background:none; border:none; color:var(--text-faint); font-size:22px; cursor:pointer;}
@@ -1315,7 +1333,13 @@ document.querySelectorAll('.modal-backdrop').forEach(m=>{
         }, 180);
       } else {
         el.style.transform = 'translateY(0)';
-        setTimeout(()=>{ el.style.transition = ''; }, 200);
+        // Important : on vide bien transform (pas juste transition) une fois
+        // l'animation de retour terminée. Laisser un transform inline "à zéro"
+        // sur la modale (même visuellement neutre) la transforme en containing
+        // block sous WebKit, ce qui casse le scroll natif fluide de tout ce qui
+        // défile à l'intérieur (ex: la liste d'aliments) -- et comme la modale
+        // n'est jamais recréée entre deux ouvertures, le blocage persistait.
+        setTimeout(()=>{ el.style.transition = ''; el.style.transform = ''; }, 200);
       }
     }
     modalEl = null; backdropEl = null; scrollRefEl = null; dragging = false; dy = 0;
