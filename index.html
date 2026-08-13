@@ -737,7 +737,15 @@ const DEFAULT_PRODUCTS = [];
 
 const DEFAULT_WEIGHTS = [];
 
-function uid(){ return Math.random().toString(36).slice(2,10); }
+// crypto.randomUUID() est supporté sur Safari iOS 15.4+ (donc sur tout iPhone
+// pertinent pour cette PWA) et génère un UUID v4 avec un vrai générateur
+// cryptographique : collision pratiquement impossible, contre un risque non
+// nul avec Math.random() (PRNG non garanti uniforme selon les moteurs, et
+// tronqué à 8 caractères ici). Repli sur l'ancienne méthode si l'API est absente.
+function uid(){
+  if(window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return Math.random().toString(36).slice(2,10);
+}
 
 // Échappe les caractères spéciaux HTML avant insertion via innerHTML. Nécessaire pour
 // tout texte qui n'est pas strictement contrôlé par l'app : le nom d'un aliment peut
@@ -773,34 +781,38 @@ function showToast(msg){
 }
 
 /* ---------- storage ---------- */
+// Charge une clé avec repli sur une valeur par défaut si absente/invalide,
+// et persiste ce défaut (même comportement que l'ancien code, juste factorisé
+// une seule fois au lieu d'être dupliqué à chaque clé chargée).
+async function loadKey(key, fallback){
+  try{
+    const r = await window.storage.get(key);
+    return JSON.parse(r.value);
+  }catch(e){
+    await window.storage.set(key, JSON.stringify(fallback));
+    return fallback;
+  }
+}
+
 async function loadAll(){
-  try{
-    const r = await window.storage.get('products');
-    products = JSON.parse(r.value).map(withNameLower);
-  }catch(e){
-    products = DEFAULT_PRODUCTS.map(p=>withNameLower({id:uid(),name:p[0],cal:p[1],prot:p[2],lip:p[3],gluc:p[4],barcode:null}));
-    await window.storage.set('products', JSON.stringify(products));
-  }
+  // Les 5 clés sont indépendantes : les lire en parallèle plutôt qu'en
+  // séquence évite de payer 5x la latence du storage au lieu de 1x
+  // (sans effet avec le shim localStorage actuel, mais redevient utile
+  // si l'app repasse un jour sur un backend storage avec de la latence réseau).
+  const [rawProducts, rawLogs, rawWeights, rawSettings, rawDayNames] = await Promise.all([
+    loadKey('products', DEFAULT_PRODUCTS.map(p=>({id:uid(),name:p[0],cal:p[1],prot:p[2],lip:p[3],gluc:p[4],barcode:null}))),
+    loadKey('logs', {}),
+    loadKey('weights', DEFAULT_WEIGHTS.map(w=>({date:w[0], weight:w[1]}))),
+    loadKey('settings', settings),
+    loadKey('dayNames', {})
+  ]);
+
+  products = rawProducts.map(withNameLower);
   reindexProducts();
-  try{
-    const r = await window.storage.get('logs');
-    logs = JSON.parse(r.value);
-  }catch(e){ logs = {}; await window.storage.set('logs', JSON.stringify(logs)); }
-  try{
-    const r = await window.storage.get('weights');
-    weights = JSON.parse(r.value);
-  }catch(e){
-    weights = DEFAULT_WEIGHTS.map(w=>({date:w[0], weight:w[1]}));
-    await window.storage.set('weights', JSON.stringify(weights));
-  }
-  try{
-    const r = await window.storage.get('settings');
-    settings = Object.assign({}, DEFAULT_SETTINGS, JSON.parse(r.value));
-  }catch(e){ await window.storage.set('settings', JSON.stringify(settings)); }
-  try{
-    const r = await window.storage.get('dayNames');
-    dayNames = JSON.parse(r.value);
-  }catch(e){ dayNames = {}; await window.storage.set('dayNames', JSON.stringify(dayNames)); }
+  logs = rawLogs;
+  weights = rawWeights;
+  settings = Object.assign({}, DEFAULT_SETTINGS, rawSettings);
+  dayNames = rawDayNames;
 }
 async function saveProducts(){
   // on ne sauvegarde jamais nameLower : c'est une donnée dérivée recalculée au chargement
@@ -1040,7 +1052,12 @@ TAB_BTNS.forEach(btn=>{
   }
 
   function onTouchMove(e){
-    if(gesture==='ignore' || refreshing || tabAnimating || e.touches.length!==1) return;
+    // anyModalOpen() est revérifié ici, pas seulement dans onTouchStart : si le
+    // geste démarre alors qu'une modale n'est pas encore ouverte, ou si
+    // onTouchStart a été court-circuité, `gesture` reste à `null` (pas 'ignore')
+    // et ce move pourrait sinon déclencher un pull-to-refresh/swipe d'onglet
+    // en arrière-plan pendant qu'une modale est affichée au premier plan.
+    if(gesture==='ignore' || refreshing || tabAnimating || anyModalOpen() || e.touches.length!==1) return;
     dx = e.touches[0].clientX - startX;
     dy = e.touches[0].clientY - startY;
 
@@ -1182,6 +1199,97 @@ document.querySelectorAll('.modal-backdrop').forEach(m=>{
     closeModal(m.id);
   });
 });
+
+/* ---------- swipe vers le bas pour fermer une modale ----------
+   Permet de fermer n'importe quelle modale ouverte (ex: historique des pesées)
+   en glissant rapidement vers le bas, en plus du bouton × et du clic sur le
+   fond assombri. Séparé du geste "fond de page" (pull-to-refresh/swipe
+   d'onglet) : les deux ne peuvent jamais se déclencher en même temps puisque
+   ce dernier revérifie anyModalOpen() à chaque déplacement (voir onTouchMove
+   plus haut).
+   Ne démarre le geste que si le doigt part du HAUT du contenu de la modale
+   (scrollTop<=0) ET tire vers le bas : sinon on laisse le scroll normal de
+   la modale (ex: longue liste de pesées) faire son travail sans interférence. */
+(function setupModalSwipeToClose(){
+  const CLOSE_DISTANCE = 120;    // distance à partir de laquelle on ferme, même tiré lentement
+  const CLOSE_VELOCITY = 0.5;    // px/ms : un flick rapide ferme même sur une courte distance
+  const MIN_DRAG = 24;           // en dessous, on ignore (évite qu'un simple tap ferme la modale)
+  const DRAG_MAX = 240;          // au-delà, résistance élastique plutôt qu'un suivi 1:1 du doigt
+
+  let modalEl=null, backdropEl=null, startY=0, startTime=0, dy=0, dragging=false;
+
+  function activeBackdrop(){
+    return document.querySelector('.modal-backdrop.active');
+  }
+
+  // Reprend les mêmes cas particuliers que le clic sur le fond assombri
+  // (voir plus haut) : la modale "Peser" ouverte depuis l'historique doit y
+  // revenir, et le scanner doit couper la caméra avant de se fermer.
+  function dismissBackdrop(m){
+    if(m.id==='modalWeight'){ closeWeightModal(); return; }
+    if(m.id==='modalScanner'){ closeScanner(); return; }
+    closeModal(m.id);
+  }
+
+  function onStart(e){
+    if(e.touches.length!==1) return;
+    backdropEl = activeBackdrop();
+    if(!backdropEl){ modalEl = null; return; }
+    const modal = e.target.closest('.modal');
+    if(!modal || !backdropEl.contains(modal)){ modalEl = null; return; }
+    // pas de capture si le geste démarre sur un champ de saisie (évite de gêner la frappe/le curseur)
+    if(e.target.closest('input, select, textarea')){ modalEl = null; return; }
+    modalEl = modal;
+    startY = e.touches[0].clientY;
+    startTime = Date.now();
+    dy = 0;
+    dragging = false; // ne devient true qu'au premier mouvement significatif vers le bas
+  }
+
+  function onMove(e){
+    if(!modalEl || e.touches.length!==1) return;
+    const delta = e.touches[0].clientY - startY;
+
+    if(!dragging){
+      if(delta <= 4 || modalEl.scrollTop > 0) return; // pas encore assez de mouvement, ou pas en haut du contenu
+      dragging = true;
+      modalEl.style.transition = 'none';
+    }
+
+    dy = Math.max(0, delta);
+    e.preventDefault(); // empêche le rebond de scroll natif pendant le geste
+    const damped = dy < DRAG_MAX ? dy : DRAG_MAX + (dy - DRAG_MAX) * 0.15;
+    modalEl.style.transform = `translateY(${damped}px)`;
+  }
+
+  function onEnd(){
+    if(!modalEl) return;
+    if(dragging){
+      const elapsed = Math.max(1, Date.now() - startTime);
+      const velocity = dy / elapsed; // px/ms
+      const shouldClose = dy > MIN_DRAG && (dy >= CLOSE_DISTANCE || velocity >= CLOSE_VELOCITY);
+      const el = modalEl, m = backdropEl;
+      el.style.transition = 'transform .2s ease';
+      if(shouldClose){
+        el.style.transform = 'translateY(100%)';
+        setTimeout(()=>{
+          dismissBackdrop(m);
+          el.style.transition = '';
+          el.style.transform = '';
+        }, 180);
+      } else {
+        el.style.transform = 'translateY(0)';
+        setTimeout(()=>{ el.style.transition = ''; }, 200);
+      }
+    }
+    modalEl = null; backdropEl = null; dragging = false; dy = 0;
+  }
+
+  document.addEventListener('touchstart', onStart, {passive:true});
+  document.addEventListener('touchmove', onMove, {passive:false});
+  document.addEventListener('touchend', onEnd, {passive:true});
+  document.addEventListener('touchcancel', onEnd, {passive:true});
+})();
 
 /* ---------- journal ---------- */
 let selectedLogProductId = null;
